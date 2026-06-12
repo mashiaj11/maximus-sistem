@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="title">
+  <title id="title">Ilustração de petiscos</title>
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#15100d"/><stop offset="1" stop-color="#080707"/></linearGradient>
+    <linearGradient id="fry" x2="0" y2="1"><stop stop-color="#ffc04a"/><stop offset=".5" stop-color="#e67a13"/><stop offset="1" stop-color="#9b3a08"/></linearGradient>
+  </defs>
+  <rect width="600" height="600" fill="url(#bg)"/>
+  <ellipse cx="300" cy="455" rx="218" ry="98" fill="#171717" stroke="#3b312d" stroke-width="8"/>
+  <ellipse cx="300" cy="435" rx="204" ry="82" fill="#25201e"/>
+  <g fill="url(#fry)" stroke="#7d2c07" stroke-width="4" stroke-linejoin="round">
+    <path d="m112 365 27-15 169 96-24 19z"/><path d="m141 322 24-12 157 127-25 16z"/>
+    <path d="m177 299 23-9 127 145-27 12z"/><path d="m225 286 22-5 88 151-28 8z"/>
+    <path d="m275 281 23 1 43 147-28 4z"/><path d="m326 289 22 6-8 140-28-4z"/>
+    <path d="m373 306 21 10-48 124-27-10z"/><path d="m415 333 19 13-83 105-24-15z"/>
+    <path d="m452 369 16 17-111 79-21-21z"/>
+  </g>
+  <ellipse cx="426" cy="427" rx="62" ry="50" fill="#171717" stroke="#4c3d35" stroke-width="7"/>
+  <ellipse cx="426" cy="427" rx="45" ry="34" fill="#f29b3f"/>
+  <path d="M396 427c18-16 43-17 61 0-19 14-42 14-61 0z" fill="#ffd28b" opacity=".65"/>
+</svg>

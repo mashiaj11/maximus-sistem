@@ -1,0 +1,1017 @@
+import { getSupabaseClient } from "./supabase";
+import { isSupabaseConfigured } from "./supabase";
+import type {
+  CartItem,
+  Category,
+  CustomerAddress,
+  CustomerOrderHistory,
+  CustomerProfile,
+  FoodVariant,
+  OrderInfo,
+  OrderTrackMode,
+  Product,
+  ProductOptionGroup,
+} from "./types";
+import type { GeoUnit } from "./geo";
+
+type AvailabilityScope = "all" | "dine_in_only" | "delivery_only" | "takeaway_only";
+
+type UnitRow = {
+  id: string;
+  slug: string;
+  name: string;
+  phone: string | null;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  is_open: boolean;
+  business_hours?: unknown;
+};
+
+type AdminSettingsRow = {
+  unit_id: string;
+  official_phone: string | null;
+  whatsapp_number: string | null;
+  minimum_order_value: number | null;
+  base_delivery_fee: number | null;
+  delivery_fee_per_km: number | null;
+  max_delivery_distance_km: number | null;
+  free_delivery_from: number | null;
+};
+
+type CategoryRow = {
+  id: string;
+  name: string;
+  slug: string;
+  sort_order: number;
+  availability_scope: AvailabilityScope;
+  active: boolean;
+};
+
+type ProductRow = {
+  id: string;
+  unit_id: string;
+  category_id: string;
+  name: string;
+  description: string | null;
+  price: number;
+  image_url: string | null;
+  option_groups: unknown;
+  available: boolean;
+};
+
+type StoreTableRow = {
+  id: string;
+  unit_id: string;
+  table_number: number;
+  status: "livre" | "ocupada" | "pedido_ativo";
+  active: boolean;
+};
+
+type CustomerRow = {
+  id: string;
+  name: string;
+  phone: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type AddressRow = {
+  id: string;
+  customer_id: string;
+  label: CustomerAddress["label"] | null;
+  street: string;
+  number: string | null;
+  complement: string | null;
+  neighborhood: string | null;
+  reference: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  is_primary: boolean;
+  is_active?: boolean | null;
+  deleted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type OrderRow = {
+  id: string;
+  unit_id: string;
+  order_number: number;
+  order_type: "delivery" | "dine_in" | "takeaway";
+  status: string;
+  payment_status: string;
+  payment_method: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  delivery_lat: number | null;
+  delivery_lng: number | null;
+  delivery_location_source: OrderInfo["deliveryLocationSource"] | null;
+  geocoding_status: OrderInfo["geocodingStatus"] | null;
+  customer_lat: number | null;
+  customer_lng: number | null;
+  customer_address_text: string | null;
+  delivery_distance_km: number | null;
+  delivery_fee: number | null;
+  delivery_fee_snapshot: number | null;
+  minimum_order_value: number | null;
+  driver_lat: number | null;
+  driver_lng: number | null;
+  total: number;
+  created_at: string;
+  units?: {
+    slug: string;
+    name: string;
+  } | null;
+  customer_addresses?: {
+    street: string;
+    number: string | null;
+    neighborhood: string | null;
+    complement: string | null;
+    reference: string | null;
+    latitude: number | null;
+    longitude: number | null;
+  } | null;
+};
+
+type OrderItemRow = {
+  order_id: string;
+  product_name: string;
+  quantity: number;
+  total_price: number;
+};
+
+export type PublicTable = {
+  id: string;
+  unitId: string;
+  tableNumber: string;
+  status: "livre" | "ocupada" | "indisponivel";
+  isActive: boolean;
+};
+
+export type PublicMenuData = {
+  units: GeoUnit[];
+  categories: Category[];
+  products: Product[];
+};
+
+const CURRENT_CUSTOMER_PHONE_KEY = "maximus_current_customer_phone";
+const LAST_ORDER_ID_KEY = "maximus_last_order_id";
+const CUSTOMER_PROFILE_KEY = "maximus:customer-profile";
+
+export type LocalCustomerProfile = {
+  name: string;
+  phone: string;
+  customer_id?: string;
+  last_address_id?: string;
+  updated_at: string;
+};
+
+function normalizePhone(phone: string) {
+  return phone.replace(/\D/g, "");
+}
+
+function slugToVariant(slug: string): FoodVariant {
+  if (slug.includes("churrasco")) return "churrasco";
+  if (slug.includes("petisco")) return "petiscos";
+  if (slug.includes("bebida")) return "bebidas";
+  if (slug.includes("chopp")) return "chopp";
+  if (slug.includes("executivo")) return "plate";
+  return "burger";
+}
+
+function tableModeFromSearch(hasTable: boolean): "dine_in" | "delivery_takeaway" {
+  return hasTable ? "dine_in" : "delivery_takeaway";
+}
+
+function scopeAllowed(scope: AvailabilityScope, hasTable: boolean) {
+  if (scope === "all") return true;
+  if (scope === "dine_in_only") return hasTable;
+  if (scope === "delivery_only") return !hasTable;
+  if (scope === "takeaway_only") return !hasTable;
+  return false;
+}
+
+function mapOptionGroups(value: unknown): ProductOptionGroup[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((group) => {
+    const item = group as {
+      id?: string;
+      name?: string;
+      title?: string;
+      type?: "single" | "multiple";
+      required?: boolean;
+      minChoices?: number;
+      maxChoices?: number;
+      min?: number;
+      max?: number;
+      choices?: Array<{
+        id?: string;
+        name?: string;
+        label?: string;
+        priceDelta?: number;
+        price?: number;
+        active?: boolean;
+      }>;
+      options?: Array<{
+        id?: string;
+        name?: string;
+        label?: string;
+        priceDelta?: number;
+        price?: number;
+        active?: boolean;
+      }>;
+    };
+
+    const choices = item.choices ?? item.options ?? [];
+    return {
+      id: item.id ?? item.name ?? crypto.randomUUID(),
+      title: item.title ?? item.name ?? "Opções",
+      type: item.type ?? (Number(item.maxChoices ?? item.max ?? 1) > 1 ? "multiple" : "single"),
+      required: Boolean(item.required),
+      min: item.min ?? item.minChoices,
+      max: item.max ?? item.maxChoices,
+      options: choices
+        .filter((choice) => choice.active !== false)
+        .map((choice) => ({
+          id: choice.id ?? choice.name ?? crypto.randomUUID(),
+          label: choice.label ?? choice.name ?? "Opção",
+          price: choice.price ?? choice.priceDelta,
+        })),
+    };
+  });
+}
+
+function mapAddress(row: AddressRow): CustomerAddress {
+  return {
+    id: row.id,
+    label: row.label ?? "Casa",
+    street: row.street,
+    number: row.number ?? "",
+    neighborhood: row.neighborhood ?? "",
+    complement: row.complement ?? undefined,
+    reference: row.reference ?? undefined,
+    latitude: row.latitude ?? undefined,
+    longitude: row.longitude ?? undefined,
+    isDefault: row.is_primary,
+    createdAt: new Date(row.created_at).getTime(),
+    updatedAt: new Date(row.updated_at).getTime(),
+  };
+}
+
+function mapOrderMode(type: OrderRow["order_type"]): OrderTrackMode {
+  if (type === "delivery") return "delivery";
+  if (type === "dine_in") return "mesa";
+  return "retirada";
+}
+
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    received: "Pedido recebido",
+    accepted: "Pedido aceito",
+    in_preparation: "Em produção",
+    ready: "Pedido pronto",
+    out_for_delivery: "Saiu para entrega",
+    driver_on_way: "Entregador a caminho",
+    driver_nearby: "Entregador a 500 metros",
+    arrived: "Pedido chegou",
+    ready_for_pickup: "Pronto para retirada",
+    delivered_to_table: "Entregue na mesa",
+    picked_up: "Retirado",
+    delivered: "Entregue",
+    cancelled: "Cancelado",
+  };
+  return labels[status] ?? status;
+}
+
+function settingsByUnitId(rows: AdminSettingsRow[] | null | undefined) {
+  return new Map((rows ?? []).map((row) => [row.unit_id, row]));
+}
+
+function mapPublicUnit(unit: UnitRow, settings?: AdminSettingsRow): GeoUnit {
+  const phone = settings?.official_phone ?? unit.phone ?? "";
+  return {
+    id: unit.id,
+    slug: unit.slug,
+    name: unit.name,
+    phone,
+    whatsappPhone: settings?.whatsapp_number ?? phone,
+    latitude: Number(unit.latitude ?? 0),
+    longitude: Number(unit.longitude ?? 0),
+    isOpen: unit.is_open && isOpenByBusinessHours(unit.business_hours),
+    minimumOrderValue: Number(settings?.minimum_order_value ?? 0),
+    baseDeliveryFee: Number(settings?.base_delivery_fee ?? 0),
+    deliveryFeePerKm: Number(settings?.delivery_fee_per_km ?? 0),
+    maxDeliveryDistanceKm: Number(settings?.max_delivery_distance_km ?? 0),
+    freeDeliveryFrom: Number(settings?.free_delivery_from ?? 0),
+  };
+}
+
+function isOpenByBusinessHours(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const dayKeys = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+  const now = new Date();
+  const today = dayKeys[now.getDay()];
+  const current = now.getHours() * 60 + now.getMinutes();
+  const row = value.find(
+    (item) => item && typeof item === "object" && (item as { day?: string }).day === today,
+  ) as
+    | {
+        open?: boolean;
+        periods?: Array<{ opensAt?: string; closesAt?: string }>;
+        opensAt?: string;
+        closesAt?: string;
+      }
+    | undefined;
+  if (!row || !row.open) return false;
+  const periods =
+    Array.isArray(row.periods) && row.periods.length
+      ? row.periods
+      : row.opensAt && row.closesAt
+        ? [{ opensAt: row.opensAt, closesAt: row.closesAt }]
+        : [];
+  return periods.some((period) => {
+    const start = timeToMinutes(period.opensAt ?? "");
+    const end = timeToMinutes(period.closesAt ?? "");
+    if (start === end) return false;
+    if (end < start) return current >= start || current <= end;
+    return current >= start && current <= end;
+  });
+}
+
+function timeToMinutes(value: string) {
+  const [hours, minutes] = value.split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0;
+  return hours * 60 + minutes;
+}
+
+async function queryOrThrow<T>(
+  label: string,
+  promise: PromiseLike<{ data: T | null; error: { message: string } | null }>,
+) {
+  const { data, error } = await promise;
+  if (error) throw new Error(`${label}: ${error.message}`);
+  return data;
+}
+
+export function rememberCustomerPhone(phone: string) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(CURRENT_CUSTOMER_PHONE_KEY, normalizePhone(phone));
+  }
+}
+
+export function getLocalCustomerProfile(): LocalCustomerProfile | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CUSTOMER_PROFILE_KEY);
+    if (!raw) return null;
+    const profile = JSON.parse(raw) as LocalCustomerProfile;
+    if (!profile.name || !profile.phone) return null;
+    return profile;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalCustomerProfile(profile: {
+  name: string;
+  phone: string;
+  customer_id?: string;
+  last_address_id?: string;
+}) {
+  if (typeof window === "undefined") return;
+  const next: LocalCustomerProfile = {
+    name: profile.name.trim(),
+    phone: normalizePhone(profile.phone),
+    customer_id: profile.customer_id,
+    last_address_id: profile.last_address_id,
+    updated_at: new Date().toISOString(),
+  };
+  window.localStorage.setItem(CUSTOMER_PROFILE_KEY, JSON.stringify(next));
+  rememberCustomerPhone(next.phone);
+}
+
+export function clearLocalCustomerProfile() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(CUSTOMER_PROFILE_KEY);
+}
+
+export function getRememberedCustomerPhone() {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(CURRENT_CUSTOMER_PHONE_KEY);
+}
+
+export function rememberLastOrderId(orderId: string) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(LAST_ORDER_ID_KEY, orderId);
+  }
+}
+
+export function getRememberedLastOrderId() {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(LAST_ORDER_ID_KEY);
+}
+
+export async function loadPublicUnits() {
+  const supabase = getSupabaseClient();
+  const rows = (await queryOrThrow(
+    "units",
+    supabase
+      .from("units")
+      .select("id, slug, name, phone, address, latitude, longitude, is_open, business_hours")
+      .eq("active", true)
+      .order("slug"),
+  )) as UnitRow[];
+  const settings = (await queryOrThrow(
+    "admin_settings",
+    supabase
+      .from("admin_settings")
+      .select(
+        "unit_id, official_phone, whatsapp_number, minimum_order_value, base_delivery_fee, delivery_fee_per_km, max_delivery_distance_km, free_delivery_from",
+      ),
+  )) as AdminSettingsRow[];
+  const settingsMap = settingsByUnitId(settings);
+
+  return rows.map((unit) => ({
+    ...mapPublicUnit(unit, settingsMap.get(unit.id)),
+    id: unit.slug,
+    address: unit.address ?? "",
+  }));
+}
+
+export async function loadPublicMenu(unitSlug?: string, hasTable = false): Promise<PublicMenuData> {
+  const supabase = getSupabaseClient();
+  const units = (await queryOrThrow(
+    "units",
+    supabase
+      .from("units")
+      .select("id, slug, name, phone, address, latitude, longitude, is_open, business_hours")
+      .eq("active", true)
+      .order("slug"),
+  )) as UnitRow[];
+  const adminSettings = (await queryOrThrow(
+    "admin_settings",
+    supabase
+      .from("admin_settings")
+      .select(
+        "unit_id, official_phone, whatsapp_number, minimum_order_value, base_delivery_fee, delivery_fee_per_km, max_delivery_distance_km, free_delivery_from",
+      ),
+  )) as AdminSettingsRow[];
+  const unitSettings = settingsByUnitId(adminSettings);
+  const selectedUnit = units.find((unit) => unit.slug === unitSlug) ?? units[0];
+  const categories = (await queryOrThrow(
+    "categories",
+    supabase
+      .from("categories")
+      .select("id, name, slug, sort_order, availability_scope, active")
+      .eq("active", true)
+      .order("sort_order"),
+  )) as CategoryRow[];
+  const allowedCategories = categories.filter((category) =>
+    scopeAllowed(category.availability_scope, hasTable),
+  );
+  const products = selectedUnit
+    ? ((await queryOrThrow(
+        "products",
+        supabase
+          .from("products")
+          .select(
+            "id, unit_id, category_id, name, description, price, image_url, option_groups, available",
+          )
+          .eq("unit_id", selectedUnit.id)
+          .eq("available", true)
+          .order("name"),
+      )) as ProductRow[])
+    : [];
+  const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const allowedIds = new Set(allowedCategories.map((category) => category.id));
+
+  return {
+    units: units.map((unit) => mapPublicUnit(unit, unitSettings.get(unit.id))),
+    categories: allowedCategories.map((category) => ({
+      id: category.id,
+      label: category.name,
+      svg: slugToVariant(category.slug),
+      availabilityScope: category.availability_scope,
+    })),
+    products: products
+      .filter((product) => allowedIds.has(product.category_id))
+      .map((product) => {
+        const category = categoryById.get(product.category_id);
+        return {
+          id: product.id,
+          name: product.name,
+          description: product.description ?? "",
+          price: Number(product.price),
+          category: product.category_id,
+          svg: slugToVariant(category?.slug ?? ""),
+          imageUrl: product.image_url ?? undefined,
+          optionGroups: mapOptionGroups(product.option_groups),
+        };
+      }),
+  };
+}
+
+export async function loadPublicTables(unitSlug: string): Promise<PublicTable[]> {
+  const supabase = getSupabaseClient();
+  const unit = (await queryOrThrow(
+    "unit",
+    supabase.from("units").select("id, slug").eq("slug", unitSlug).single(),
+  )) as Pick<UnitRow, "id" | "slug">;
+  const rows = (await queryOrThrow(
+    "store_tables",
+    supabase
+      .from("store_tables")
+      .select("id, unit_id, table_number, status, active")
+      .eq("unit_id", unit.id)
+      .order("table_number"),
+  )) as StoreTableRow[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    unitId: unit.slug,
+    tableNumber: String(row.table_number).padStart(2, "0"),
+    status: row.active ? (row.status === "livre" ? "livre" : "ocupada") : "indisponivel",
+    isActive: row.active,
+  }));
+}
+
+export async function findPublicTable(unitSlug: string, tableNumber: string) {
+  const supabase = getSupabaseClient();
+  const unit = (await queryOrThrow(
+    "unit",
+    supabase.from("units").select("id, slug").eq("slug", unitSlug).single(),
+  )) as Pick<UnitRow, "id" | "slug">;
+  const number = Number(tableNumber);
+  if (!Number.isFinite(number)) return null;
+  const rows = (await queryOrThrow(
+    "store_table",
+    supabase
+      .from("store_tables")
+      .select("id, table_number, active")
+      .eq("unit_id", unit.id)
+      .eq("table_number", number)
+      .limit(1),
+  )) as Array<Pick<StoreTableRow, "id" | "table_number" | "active">>;
+  return rows[0] ?? null;
+}
+
+export async function loadDeliveryRules(unitId: string) {
+  const rows = (await queryOrThrow(
+    "delivery_fee_rules",
+    getSupabaseClient()
+      .from("delivery_fee_rules")
+      .select("id, max_distance_km, estimated_minutes, delivery_fee, active")
+      .eq("unit_id", unitId)
+      .eq("active", true)
+      .order("max_distance_km"),
+  )) as Array<{ max_distance_km: number; delivery_fee: number; estimated_minutes: number }>;
+  return rows.map((row) => ({
+    maxDistanceKm: Number(row.max_distance_km),
+    deliveryFee: Number(row.delivery_fee),
+    estimatedMinutes: row.estimated_minutes,
+  }));
+}
+
+export async function loadDeliveryNeighborhoodRules(unitId?: string) {
+  let query = getSupabaseClient()
+    .from("delivery_neighborhood_rules")
+    .select("id, unit_id, neighborhood, estimated_minutes, delivery_fee, active")
+    .eq("active", true)
+    .order("neighborhood");
+
+  if (unitId) query = query.eq("unit_id", unitId);
+
+  const { data, error } = await query;
+  if (error) {
+    if (error.code === "42P01" || error.message.includes("delivery_neighborhood_rules")) {
+      return [];
+    }
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    unitId: row.unit_id as string,
+    neighborhood: String(row.neighborhood ?? ""),
+    deliveryFee: Number(row.delivery_fee),
+    estimatedMinutes: Number(row.estimated_minutes ?? 0),
+  }));
+}
+
+export async function getCustomerByPhone(phone: string): Promise<CustomerProfile | null> {
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanPhone) return null;
+  const supabase = getSupabaseClient();
+  const customers = (await queryOrThrow(
+    "customers",
+    supabase
+      .from("customers")
+      .select("id, name, phone, created_at, updated_at")
+      .eq("phone", cleanPhone)
+      .limit(1),
+  )) as CustomerRow[];
+  const customer = customers[0];
+  if (!customer) return null;
+  const [addresses, orderRows] = await Promise.all([
+    queryOrThrow(
+      "customer_addresses",
+      supabase
+        .from("customer_addresses")
+        .select(
+          "id, customer_id, label, street, number, complement, neighborhood, reference, latitude, longitude, is_primary, created_at, updated_at",
+        )
+        .eq("customer_id", customer.id)
+        .eq("is_active", true)
+        .order("created_at"),
+    ) as Promise<AddressRow[] | null>,
+    queryOrThrow(
+      "orders",
+      supabase
+        .from("orders")
+        .select(
+          "id, unit_id, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, total, created_at",
+        )
+        .eq("customer_id", customer.id)
+        .order("created_at", { ascending: false })
+        .limit(20),
+    ) as Promise<OrderRow[] | null>,
+  ]);
+  const orderIds = (orderRows ?? []).map((order) => order.id);
+  const itemRows = orderIds.length
+    ? ((await queryOrThrow(
+        "order_items",
+        supabase
+          .from("order_items")
+          .select("order_id, product_name, quantity, total_price")
+          .in("order_id", orderIds),
+      )) as OrderItemRow[])
+    : [];
+  const itemsByOrder = new Map<string, OrderItemRow[]>();
+  for (const item of itemRows) {
+    itemsByOrder.set(item.order_id, [...(itemsByOrder.get(item.order_id) ?? []), item]);
+  }
+
+  const profile = {
+    id: customer.id,
+    name: customer.name,
+    phone: customer.phone,
+    addresses: (addresses ?? []).map(mapAddress),
+    orders: (orderRows ?? []).map(
+      (order): CustomerOrderHistory => ({
+        id: order.id,
+        number: `#${order.order_number}`,
+        date: new Date(order.created_at).getTime(),
+        items: (itemsByOrder.get(order.id) ?? []).map((item) => ({
+          name: item.product_name,
+          quantity: item.quantity,
+          total: Number(item.total_price),
+        })),
+        total: Number(order.total),
+        mode: mapOrderMode(order.order_type),
+        status: statusLabel(order.status),
+      }),
+    ),
+    createdAt: new Date(customer.created_at).getTime(),
+    updatedAt: new Date(customer.updated_at).getTime(),
+  };
+  saveLocalCustomerProfile({
+    name: profile.name,
+    phone: profile.phone,
+    customer_id: profile.id,
+    last_address_id: profile.addresses.find((address) => address.isDefault)?.id,
+  });
+  return profile;
+}
+
+export async function getCurrentCustomerFromSupabase(): Promise<CustomerProfile | null> {
+  const localProfile = getLocalCustomerProfile();
+  const phone = localProfile?.phone ?? getRememberedCustomerPhone();
+  return phone ? getCustomerByPhone(phone) : null;
+}
+
+export async function saveCustomerToSupabase(data: {
+  name: string;
+  phone: string;
+}): Promise<CustomerProfile> {
+  const phone = normalizePhone(data.phone);
+  const supabase = getSupabaseClient();
+  const existing = await getCustomerByPhone(phone);
+  if (existing) {
+    await queryOrThrow(
+      "update customer",
+      supabase.from("customers").update({ name: data.name.trim() }).eq("id", existing.id),
+    );
+    rememberCustomerPhone(phone);
+    saveLocalCustomerProfile({
+      name: data.name,
+      phone,
+      customer_id: existing.id,
+      last_address_id: existing.addresses.find((address) => address.isDefault)?.id,
+    });
+    return { ...existing, name: data.name.trim(), updatedAt: Date.now() };
+  }
+
+  const row = (await queryOrThrow(
+    "insert customer",
+    supabase
+      .from("customers")
+      .insert({ name: data.name.trim(), phone })
+      .select("id, name, phone, created_at, updated_at")
+      .single(),
+  )) as CustomerRow;
+  rememberCustomerPhone(phone);
+  saveLocalCustomerProfile({ name: row.name, phone: row.phone, customer_id: row.id });
+  return {
+    id: row.id,
+    name: row.name,
+    phone: row.phone,
+    addresses: [],
+    orders: [],
+    createdAt: new Date(row.created_at).getTime(),
+    updatedAt: new Date(row.updated_at).getTime(),
+  };
+}
+
+export async function saveAddressToSupabase(
+  customerId: string,
+  address: Omit<CustomerAddress, "id" | "createdAt" | "updatedAt"> & { id?: string },
+): Promise<CustomerProfile> {
+  const supabase = getSupabaseClient();
+  const payload = {
+    customer_id: customerId,
+    label: address.label,
+    street: address.street,
+    number: address.number,
+    complement: address.complement ?? null,
+    neighborhood: address.neighborhood,
+    reference: address.reference ?? null,
+    latitude: address.latitude ?? null,
+    longitude: address.longitude ?? null,
+    is_primary: address.isDefault,
+    is_active: true,
+    deleted_at: null,
+  };
+
+  if (address.isDefault) {
+    await queryOrThrow(
+      "clear default address",
+      supabase
+        .from("customer_addresses")
+        .update({ is_primary: false })
+        .eq("customer_id", customerId),
+    );
+  }
+
+  if (address.id) {
+    await queryOrThrow(
+      "update address",
+      supabase.from("customer_addresses").update(payload).eq("id", address.id),
+    );
+  } else {
+    await queryOrThrow("insert address", supabase.from("customer_addresses").insert(payload));
+  }
+
+  const customer = await getCustomerById(customerId);
+  if (!customer) throw new Error("Cliente não encontrado.");
+  saveLocalCustomerProfile({
+    name: customer.name,
+    phone: customer.phone,
+    customer_id: customer.id,
+    last_address_id:
+      customer.addresses.find((item) => item.id === address.id)?.id ??
+      customer.addresses.find((item) => item.isDefault)?.id ??
+      customer.addresses.at(-1)?.id,
+  });
+  return customer;
+}
+
+export async function deleteAddressFromSupabase(
+  customerId: string,
+  addressId: string,
+): Promise<CustomerProfile> {
+  const supabase = getSupabaseClient();
+  await queryOrThrow(
+    "soft delete address",
+    supabase
+      .from("customer_addresses")
+      .update({ is_active: false, deleted_at: new Date().toISOString(), is_primary: false })
+      .eq("id", addressId)
+      .eq("customer_id", customerId),
+  );
+  const customer = await getCustomerById(customerId);
+  if (!customer) throw new Error("Cliente não encontrado.");
+  if (customer.addresses.length > 0 && !customer.addresses.some((address) => address.isDefault)) {
+    return saveAddressToSupabase(customerId, { ...customer.addresses[0], isDefault: true });
+  }
+  return customer;
+}
+
+export async function setDefaultAddressOnSupabase(
+  customerId: string,
+  addressId: string,
+): Promise<CustomerProfile> {
+  const customer = await getCustomerById(customerId);
+  const address = customer?.addresses.find((item) => item.id === addressId);
+  if (!customer || !address) throw new Error("Endereço não encontrado.");
+  return saveAddressToSupabase(customerId, { ...address, isDefault: true });
+}
+
+async function getCustomerById(customerId: string) {
+  const rows = (await queryOrThrow(
+    "customer by id",
+    getSupabaseClient().from("customers").select("phone").eq("id", customerId).limit(1),
+  )) as Array<{ phone: string }>;
+  return rows[0] ? getCustomerByPhone(rows[0].phone) : null;
+}
+
+function orderTypeForMode(mode: OrderTrackMode): "delivery" | "dine_in" | "takeaway" {
+  if (mode === "delivery") return "delivery";
+  if (mode === "mesa") return "dine_in";
+  return "takeaway";
+}
+
+function paymentStatusForOrder(status?: OrderInfo["paymentStatus"]) {
+  if (status === "pending_on_delivery") return "paid_on_delivery";
+  return status ?? "pending";
+}
+
+function paymentMethodForOrder(method?: OrderInfo["paymentMethod"]) {
+  if (method === "pix_entrega") return "pix_balcao";
+  return method ?? "pix_app";
+}
+
+export async function createOrderInSupabase(params: {
+  order: Omit<OrderInfo, "id" | "createdAt">;
+  cartItems: CartItem[];
+  customerId?: string;
+  addressId?: string;
+  unitId: string;
+  tableId?: string | null;
+  deliveryFee?: number;
+  deliveryDistanceKm?: number | null;
+}) {
+  if (!isSupabaseConfigured) {
+    throw new Error("Supabase não configurado. Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.");
+  }
+
+  const supabase = getSupabaseClient();
+  const orderNumber = Math.floor(Date.now() % 1000000000);
+  const subtotal = params.cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const deliveryFee = params.deliveryFee ?? 0;
+  const total = subtotal + deliveryFee;
+  const paymentStatus = paymentStatusForOrder(params.order.paymentStatus);
+  const paymentMethod = paymentMethodForOrder(params.order.paymentMethod);
+  const order = (await queryOrThrow(
+    "insert order",
+    supabase
+      .from("orders")
+      .insert({
+        unit_id: params.unitId,
+        unit_name: params.order.unitName ?? null,
+        unit_lat: params.order.unitLat ?? null,
+        unit_lng: params.order.unitLng ?? null,
+        customer_id: params.customerId ?? null,
+        customer_address_id: params.addressId ?? null,
+        table_id: params.tableId ?? null,
+        order_number: orderNumber,
+        order_type: orderTypeForMode(params.order.mode),
+        status: "received",
+        payment_status: paymentStatus,
+        payment_method: paymentMethod,
+        customer_name: params.order.customerName ?? null,
+        customer_phone: params.order.customerPhone ?? null,
+        delivery_fee: deliveryFee,
+        delivery_fee_snapshot: deliveryFee,
+        driver_earned_value: deliveryFee,
+        delivery_payout_amount: deliveryFee,
+        minimum_order_value: params.order.minimumOrderValue ?? 0,
+        delivery_distance_km: params.deliveryDistanceKm ?? null,
+        customer_lat: params.order.customerLat ?? null,
+        customer_lng: params.order.customerLng ?? null,
+        customer_address_text: params.order.customerAddressText ?? null,
+        delivery_lat: params.order.deliveryLat ?? null,
+        delivery_lng: params.order.deliveryLng ?? null,
+        delivery_location_source: params.order.deliveryLocationSource ?? null,
+        geocoding_status: params.order.geocodingStatus ?? null,
+        address_street: params.order.address?.street ?? null,
+        address_number: params.order.address?.number ?? null,
+        address_neighborhood: params.order.address?.neighborhood ?? null,
+        address_complement: params.order.address?.complement ?? null,
+        address_reference: params.order.address?.reference ?? null,
+        subtotal,
+        total,
+        notes: null,
+      })
+      .select("id, order_number, created_at")
+      .single(),
+  )) as { id: string; order_number: number; created_at: string };
+
+  await queryOrThrow(
+    "insert order_items",
+    supabase.from("order_items").insert(
+      params.cartItems.map((item) => ({
+        order_id: order.id,
+        product_id: item.product.id,
+        product_name: item.product.name,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        total_price: item.unitPrice * item.quantity,
+        customizations: item.customizations.flatMap((group) =>
+          group.options.map((option) => `${group.groupTitle}: ${option.label}`),
+        ),
+        notes: item.note ?? null,
+      })),
+    ),
+  );
+
+  await queryOrThrow(
+    "insert payment",
+    supabase.from("payments").insert({
+      order_id: order.id,
+      method: paymentMethod,
+      status: paymentStatus,
+      amount: total,
+      confirmed_at: paymentStatus === "confirmed" ? new Date().toISOString() : null,
+    }),
+  );
+
+  rememberLastOrderId(order.id);
+
+  return {
+    id: order.id,
+    number: order.order_number,
+    createdAt: new Date(order.created_at).getTime(),
+    total,
+  };
+}
+
+export async function getOrderInfo(orderId: string): Promise<OrderInfo | null> {
+  if (!isSupabaseConfigured) {
+    throw new Error("Supabase não configurado. Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.");
+  }
+
+  const rows = (await queryOrThrow(
+    "order",
+    getSupabaseClient()
+      .from("orders")
+      .select(
+        "id, unit_id, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_distance_km, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, total, created_at, units(slug, name), customer_addresses(street, number, neighborhood, complement, reference, latitude, longitude)",
+      )
+      .eq("id", orderId)
+      .limit(1),
+  )) as OrderRow[];
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    mode: mapOrderMode(row.order_type),
+    total: Number(row.total),
+    createdAt: new Date(row.created_at).getTime(),
+    paymentStatus:
+      row.payment_status === "paid_on_delivery"
+        ? "pending_on_delivery"
+        : (row.payment_status as OrderInfo["paymentStatus"]),
+    paymentMethod: row.payment_method as OrderInfo["paymentMethod"],
+    customerName: row.customer_name ?? undefined,
+    customerPhone: row.customer_phone ?? undefined,
+    unitId: row.unit_id,
+    unitSlug: row.units?.slug,
+    unitName: row.units?.name,
+    deliveryFee: Number(row.delivery_fee ?? row.delivery_fee_snapshot ?? 0),
+    deliveryDistanceKm:
+      row.delivery_distance_km == null ? undefined : Number(row.delivery_distance_km),
+    minimumOrderValue: Number(row.minimum_order_value ?? 0),
+    status: row.status,
+    deliveryStatus: row.status,
+    deliveryLat: row.delivery_lat ?? row.customer_addresses?.latitude ?? undefined,
+    deliveryLng: row.delivery_lng ?? row.customer_addresses?.longitude ?? undefined,
+    deliveryLocationSource: row.delivery_location_source ?? undefined,
+    geocodingStatus: row.geocoding_status ?? undefined,
+    customerLat: row.customer_lat ?? undefined,
+    customerLng: row.customer_lng ?? undefined,
+    customerAddressText:
+      row.customer_address_text ??
+      (row.customer_addresses
+        ? [
+            `${row.customer_addresses.street}${
+              row.customer_addresses.number ? `, ${row.customer_addresses.number}` : ""
+            }`,
+            row.customer_addresses.neighborhood,
+            row.customer_addresses.complement
+              ? `Compl.: ${row.customer_addresses.complement}`
+              : null,
+            row.customer_addresses.reference ? `Ref.: ${row.customer_addresses.reference}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")
+        : undefined),
+    driverLat: row.driver_lat ?? undefined,
+    driverLng: row.driver_lng ?? undefined,
+  };
+}
+
+export function formatPrice(value: number) {
+  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
