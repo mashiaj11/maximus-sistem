@@ -72,37 +72,6 @@ const WHATSAPP_FIELDS: Array<{ key: keyof WhatsappMessageSettings; label: string
   { key: "deliveredMessage", label: "Pedido entregue" },
 ];
 
-type ResetScope = "orders" | "customers" | "payments" | "finished_deliveries" | "all_operational";
-
-const RESET_ACTIONS: Array<{ scope: ResetScope; title: string; description: string }> = [
-  {
-    scope: "orders",
-    title: "Zerar pedidos e dashboard",
-    description: "Remove pedidos e itens. O dashboard calculado por pedidos fica zerado.",
-  },
-  {
-    scope: "customers",
-    title: "Zerar clientes e endereços",
-    description: "Remove clientes e endereços sem apagar unidades, produtos ou configurações.",
-  },
-  {
-    scope: "payments",
-    title: "Zerar pagamentos",
-    description: "Remove registros de pagamentos vinculados aos pedidos.",
-  },
-  {
-    scope: "finished_deliveries",
-    title: "Zerar entregas finalizadas",
-    description: "Remove pedidos já finalizados/cancelados e histórico derivado deles.",
-  },
-  {
-    scope: "all_operational",
-    title: "Zerar tudo operacional",
-    description:
-      "Remove pedidos, pagamentos, clientes e endereços. Mantém configurações e cardápio.",
-  },
-];
-
 function timeToMinutes(value: string) {
   const [hours, minutes] = value.split(":").map(Number);
   if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0;
@@ -146,11 +115,6 @@ function buildWhatsAppLink(phone: string) {
   return `https://wa.me/${withCountry}`;
 }
 
-function nonNegativeNumber(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
-}
-
 function copyText(text: string) {
   if (typeof navigator !== "undefined" && navigator.clipboard && text) {
     navigator.clipboard.writeText(text);
@@ -164,7 +128,7 @@ function ConfiguracoesPage() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "failed">("idle");
   const [messageTested, setMessageTested] = useState(false);
-  const [resetScope, setResetScope] = useState<ResetScope | null>(null);
+  const [resetModalOpen, setResetModalOpen] = useState(false);
   const [resetConfirmation, setResetConfirmation] = useState("");
   const [resetting, setResetting] = useState(false);
 
@@ -764,84 +728,6 @@ function ConfiguracoesPage() {
             />
           </label>
         </section>
-
-        <section className="rounded-xl border border-border bg-card p-5">
-          <h2 className="text-lg font-semibold">Entrega e pedido mínimo</h2>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm text-muted-foreground">Pedido mínimo</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={draft.minimumOrderValue ?? 0}
-                onChange={(event) =>
-                  setDraft({ ...draft, minimumOrderValue: nonNegativeNumber(event.target.value) })
-                }
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm text-muted-foreground">Taxa base</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={draft.baseDeliveryFee ?? 0}
-                onChange={(event) =>
-                  setDraft({ ...draft, baseDeliveryFee: nonNegativeNumber(event.target.value) })
-                }
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm text-muted-foreground">Taxa por km</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={draft.deliveryFeePerKm ?? 0}
-                onChange={(event) =>
-                  setDraft({ ...draft, deliveryFeePerKm: nonNegativeNumber(event.target.value) })
-                }
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm text-muted-foreground">
-                Distância máxima km
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.1"
-                value={draft.maxDeliveryDistanceKm ?? 0}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    maxDeliveryDistanceKm: nonNegativeNumber(event.target.value),
-                  })
-                }
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-sm text-muted-foreground">
-                Frete grátis a partir de
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={draft.freeDeliveryFrom ?? 0}
-                onChange={(event) =>
-                  setDraft({ ...draft, freeDeliveryFrom: nonNegativeNumber(event.target.value) })
-                }
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-        </section>
       </div>
 
       <section className="mt-6 rounded-xl border border-destructive/40 bg-card p-5">
@@ -855,25 +741,17 @@ function ConfiguracoesPage() {
             </p>
           </div>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {RESET_ACTIONS.map((action) => (
-            <button
-              key={action.scope}
-              type="button"
-              onClick={() => {
-                setResetScope(action.scope);
-                setResetConfirmation("");
-              }}
-              className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-left hover:bg-destructive/15"
-            >
-              <span className="flex items-center gap-2 text-sm font-black text-destructive">
-                <Trash2 className="h-4 w-4" />
-                {action.title}
-              </span>
-              <span className="mt-2 block text-xs text-muted-foreground">{action.description}</span>
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setResetModalOpen(true);
+            setResetConfirmation("");
+          }}
+          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-destructive px-4 py-2 text-sm font-extrabold text-white hover:opacity-90"
+        >
+          <Trash2 className="h-4 w-4" />
+          Zerar dados operacionais
+        </button>
       </section>
 
       <div className="mt-6 flex items-center gap-3">
@@ -947,14 +825,14 @@ function ConfiguracoesPage() {
         )}
       </div>
 
-      {resetScope && (
+      {resetModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="admin-root w-full max-w-md rounded-xl border border-destructive/40 bg-card p-6 font-sora shadow-xl">
-            <h2 className="text-xl font-black text-destructive">
-              {RESET_ACTIONS.find((action) => action.scope === resetScope)?.title}
-            </h2>
+            <h2 className="text-xl font-black text-destructive">Zerar dados operacionais</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              {RESET_ACTIONS.find((action) => action.scope === resetScope)?.description}
+              Esta ação apaga pedidos, itens, pagamentos, clientes, endereços e entregadores de
+              teste. Unidades, configurações, produtos, categorias, mesas e regras de entrega serão
+              preservados.
             </p>
             <label className="mt-5 block text-sm font-bold">Digite ZERAR para confirmar</label>
             <input
@@ -965,7 +843,7 @@ function ConfiguracoesPage() {
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setResetScope(null)}
+                onClick={() => setResetModalOpen(false)}
                 className="rounded-lg bg-secondary px-4 py-2 text-sm font-bold"
               >
                 Cancelar
@@ -974,14 +852,17 @@ function ConfiguracoesPage() {
                 type="button"
                 disabled={resetConfirmation !== "ZERAR" || resetting}
                 onClick={async () => {
-                  if (!resetScope) return;
                   setResetting(true);
                   try {
-                    await resetOperationalData(resetScope);
+                    await resetOperationalData("ZERAR");
                     toast.success("Dados operacionais zerados com sucesso.");
-                    setResetScope(null);
-                  } catch {
-                    toast.error("Não foi possível zerar os dados. Tente novamente.");
+                    setResetModalOpen(false);
+                  } catch (error) {
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Não foi possível zerar os dados. Tente novamente.",
+                    );
                   } finally {
                     setResetting(false);
                   }

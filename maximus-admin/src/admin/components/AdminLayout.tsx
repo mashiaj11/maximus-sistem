@@ -9,7 +9,6 @@ import {
   Settings,
   Truck,
   MapPinned,
-  Users,
 } from "lucide-react";
 import { isFinalStatus } from "@/admin/data/statuses";
 import { isPaymentPending, useAdmin } from "@/admin/store";
@@ -25,7 +24,6 @@ const NAV = [
   { to: "/admin/mesas", label: "Mesas", icon: Grid3x3 },
   { to: "/admin/entregadores", label: "Entregadores", icon: Truck },
   { to: "/admin/entrega", label: "Entrega", icon: MapPinned },
-  { to: "/admin/usuarios", label: "Usuários", icon: Users },
   { to: "/admin/configuracoes", label: "Configurações", icon: Settings },
 ];
 

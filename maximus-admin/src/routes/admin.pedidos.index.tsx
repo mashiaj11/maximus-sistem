@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ArrowRight, Check, ReceiptText, Truck, X } from "lucide-react";
-import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import { TypeBadge } from "@/admin/components/Badges";
 import { isFinalStatus } from "@/admin/data/statuses";
@@ -181,6 +180,11 @@ function PedidoCard({
           <p className="mt-1 text-sm font-bold">
             {order.type === "mesa" ? orderLocation(order) : order.customerName}
           </p>
+          {order.recipientName && (
+            <p className="mt-1 text-xs font-semibold text-muted-foreground">
+              Para: {order.recipientName}
+            </p>
+          )}
         </div>
         <span className="rounded-md bg-secondary px-2 py-1 text-xs font-bold text-muted-foreground">
           {formatElapsed(order.createdAt)}
@@ -351,7 +355,7 @@ function AssignCourierDialog({
 }
 
 function PedidosPage() {
-  const { orders, selectedUnit, couriers, resetOperationalData } = useAdmin();
+  const { orders, selectedUnit, couriers } = useAdmin();
   const [assigning, setAssigning] = useState<Order | null>(null);
   const sorted = [...orders].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
@@ -364,24 +368,6 @@ function PedidosPage() {
         title="Pedidos"
         subtitle={`${selectedUnit?.name ?? "Unidade"} · ${activeCount} pedidos ativos · ${formatTime(new Date().toISOString())}`}
       />
-      <div className="mb-4 flex justify-end">
-        <button
-          type="button"
-          onClick={async () => {
-            if (window.prompt("Digite ZERAR para limpar todos os pedidos") !== "ZERAR") return;
-            try {
-              await resetOperationalData("orders");
-              toast.success("Pedidos limpos com sucesso.");
-            } catch {
-              toast.error("Não foi possível limpar os pedidos.");
-            }
-          }}
-          className="rounded-lg bg-destructive px-4 py-2 text-sm font-extrabold text-white"
-        >
-          Limpar todos os pedidos
-        </button>
-      </div>
-
       <div className="grid gap-4 xl:grid-cols-5">
         {QUEUES.map((queue) => {
           const queueOrders = sorted.filter((order) => queueFor(order) === queue.key);

@@ -103,6 +103,8 @@ create table public.store_tables (
   qr_code_data text not null,
   status text not null default 'livre',
   active boolean not null default true,
+  is_active boolean not null default true,
+  deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint store_tables_unique_number_per_unit unique (unit_id, table_number),
@@ -147,8 +149,12 @@ create table public.orders (
   payment_method text,
   customer_name text,
   customer_phone text,
+  recipient_name text,
+  recipient_phone text,
+  recipient_notes text,
   delivery_fee numeric(10, 2) not null default 0,
   delivery_payout_amount numeric(10, 2) not null default 0,
+  delivery_range_id uuid references public.delivery_fee_rules(id) on delete set null,
   customer_lat numeric(10, 7),
   customer_lng numeric(10, 7),
   customer_address_text text,
@@ -262,23 +268,6 @@ create table public.delivery_fee_rules (
   constraint delivery_fee_rules_values_valid check (max_distance_km > 0 and estimated_minutes > 0 and delivery_fee >= 0)
 );
 
-create table public.delivery_neighborhood_rules (
-  id uuid primary key default gen_random_uuid(),
-  unit_id uuid not null references public.units(id) on delete cascade,
-  neighborhood text not null,
-  estimated_minutes integer not null,
-  delivery_fee numeric(10, 2) not null,
-  active boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint delivery_neighborhood_rules_unique_per_unit unique (unit_id, neighborhood),
-  constraint delivery_neighborhood_rules_values_valid check (
-    length(trim(neighborhood)) > 0
-    and estimated_minutes > 0
-    and delivery_fee >= 0
-  )
-);
-
 create table public.admin_settings (
   id uuid primary key default gen_random_uuid(),
   unit_id uuid not null references public.units(id) on delete cascade,
@@ -364,8 +353,6 @@ create trigger set_payments_updated_at before update on public.payments
 for each row execute function public.set_updated_at();
 create trigger set_delivery_fee_rules_updated_at before update on public.delivery_fee_rules
 for each row execute function public.set_updated_at();
-create trigger set_delivery_neighborhood_rules_updated_at before update on public.delivery_neighborhood_rules
-for each row execute function public.set_updated_at();
 create trigger set_admin_settings_updated_at before update on public.admin_settings
 for each row execute function public.set_updated_at();
 
@@ -378,7 +365,6 @@ create index idx_products_available on public.products(unit_id, available);
 create index idx_store_tables_unit_id on public.store_tables(unit_id);
 create index idx_delivery_drivers_unit_status on public.delivery_drivers(unit_id, status);
 create index idx_delivery_fee_rules_unit_distance on public.delivery_fee_rules(unit_id, max_distance_km);
-create index idx_delivery_neighborhood_rules_unit_neighborhood on public.delivery_neighborhood_rules(unit_id, neighborhood);
 create index idx_orders_unit_status on public.orders(unit_id, status);
 create index idx_orders_unit_created_at on public.orders(unit_id, created_at desc);
 create index idx_orders_customer_id on public.orders(customer_id);
@@ -400,7 +386,6 @@ alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
 alter table public.payments enable row level security;
 alter table public.delivery_fee_rules enable row level security;
-alter table public.delivery_neighborhood_rules enable row level security;
 alter table public.admin_settings enable row level security;
 
 -- Projeto ainda sem Auth/RBAC. Estas policies liberam a fase inicial via anon/authenticated.
@@ -416,7 +401,6 @@ create policy "initial_public_access_orders" on public.orders for all to anon, a
 create policy "initial_public_access_order_items" on public.order_items for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_payments" on public.payments for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_delivery_fee_rules" on public.delivery_fee_rules for all to anon, authenticated using (true) with check (true);
-create policy "initial_public_access_delivery_neighborhood_rules" on public.delivery_neighborhood_rules for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_admin_settings" on public.admin_settings for all to anon, authenticated using (true) with check (true);
 
 -- Data API grants for projects where new tables are not exposed automatically.
@@ -433,7 +417,6 @@ grant select, insert, update, delete on
   public.order_items,
   public.payments,
   public.delivery_fee_rules,
-  public.delivery_neighborhood_rules,
   public.admin_settings
 to anon, authenticated;
 

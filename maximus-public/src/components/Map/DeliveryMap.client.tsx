@@ -118,7 +118,7 @@ export function LocationPickerMapClient({
           pathOptions={{ color: "#22c55e", fillColor: "#22c55e", fillOpacity: 0.9 }}
           radius={10}
         >
-          <Popup>Local real da entrega</Popup>
+          <Popup>Local da entrega</Popup>
         </CircleMarker>
       )}
     </MapContainer>

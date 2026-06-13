@@ -195,6 +195,19 @@ function PedidoDetalhePage() {
             )}
           </div>
 
+          {order.recipientName && (
+            <div className="rounded-xl border border-border bg-card p-5">
+              <h3 className="font-semibold mb-3">Destinatário</h3>
+              <p className="text-sm">{order.recipientName}</p>
+              {order.recipientPhone && (
+                <p className="text-sm text-muted-foreground">{order.recipientPhone}</p>
+              )}
+              {order.recipientNotes && (
+                <p className="mt-2 text-xs text-muted-foreground">{order.recipientNotes}</p>
+              )}
+            </div>
+          )}
+
           {order.type === "delivery" && order.address && (
             <div className="rounded-xl border border-border bg-card p-5">
               <h3 className="font-semibold mb-3 flex items-center gap-2">

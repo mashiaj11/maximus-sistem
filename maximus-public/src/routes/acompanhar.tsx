@@ -1,13 +1,17 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Check, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Button } from "@/components/ui/button";
-import { useOrder } from "@/lib/store";
+import { useCart, useOrder } from "@/lib/store";
 import { STATUS_FLOWS, type OrderInfo } from "@/lib/types";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { getOrderInfo, getRememberedLastOrderId } from "@/lib/supabase-data";
+import {
+  clearRememberedLastOrderId,
+  getOrderInfo,
+  getRememberedLastOrderId,
+} from "@/lib/supabase-data";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
 import { getDistanceKm } from "@/lib/geo";
 
@@ -22,7 +26,9 @@ export const Route = createFileRoute("/acompanhar")({
 });
 
 export function TrackPageContent({ orderId: routeOrderId }: { orderId?: string }) {
-  const { order: contextOrder, placeOrder } = useOrder();
+  const navigate = useNavigate();
+  const { clear } = useCart();
+  const { order: contextOrder, placeOrder, clearOrder } = useOrder();
   const [loadedOrder, setLoadedOrder] = useState<OrderInfo | null>(null);
   const effectiveOrderId = routeOrderId ?? contextOrder?.id ?? getRememberedLastOrderId();
   const order =
@@ -80,6 +86,16 @@ export function TrackPageContent({ orderId: routeOrderId }: { orderId?: string }
       : null;
   const etaMinutes =
     remainingDistanceKm == null ? null : Math.max(3, Math.round((remainingDistanceKm / 25) * 60));
+  const normalizedStatus = normalizeStatus(order?.status);
+  const isFinished = ["delivered", "picked_up", "delivered_to_table"].includes(normalizedStatus);
+  const isCancelled = normalizedStatus === "cancelled";
+
+  function startNewOrder() {
+    clear();
+    clearOrder();
+    clearRememberedLastOrderId();
+    navigate({ to: "/menu" });
+  }
 
   return (
     <div className="min-h-screen">
@@ -92,6 +108,23 @@ export function TrackPageContent({ orderId: routeOrderId }: { orderId?: string }
               <Link to="/menu">Ver cardápio</Link>
             </Button>
           </div>
+        ) : isCancelled ? (
+          <FinalOrderScreen
+            logoSrc="/branding/maximus-hero-logo.png"
+            title="Pedido cancelado"
+            description="Se precisar, entre em contato com a unidade para mais informações."
+            buttonLabel="Fazer novo pedido"
+            onNewOrder={startNewOrder}
+            tone="cancelled"
+          />
+        ) : isFinished ? (
+          <FinalOrderScreen
+            logoSrc="/branding/maximus-hero-logo.png"
+            title="Obrigado e volte sempre!"
+            description="Seu pedido foi finalizado com sucesso."
+            buttonLabel="Pedir novamente"
+            onNewOrder={startNewOrder}
+          />
         ) : (
           <>
             <div className="mb-8 rounded-2xl border border-border bg-card p-5">
@@ -221,6 +254,48 @@ function InfoRow({ label, value, strong }: { label: string; value: string; stron
   );
 }
 
+function FinalOrderScreen({
+  logoSrc,
+  title,
+  description,
+  buttonLabel,
+  onNewOrder,
+  tone = "success",
+}: {
+  logoSrc: string;
+  title: string;
+  description: string;
+  buttonLabel: string;
+  onNewOrder: () => void;
+  tone?: "success" | "cancelled";
+}) {
+  return (
+    <section className="flex min-h-[60vh] items-center justify-center">
+      <div className="w-full rounded-2xl border border-border bg-card px-6 py-10 text-center shadow-lg sm:px-10">
+        <img
+          src={logoSrc}
+          alt="Maximus Hamburgueria"
+          className="mx-auto h-20 w-auto max-w-[240px] object-contain sm:h-24"
+        />
+        <h1
+          className={cn(
+            "mt-8 text-3xl font-black sm:text-4xl",
+            tone === "cancelled" ? "text-foreground" : "text-primary",
+          )}
+        >
+          {title}
+        </h1>
+        <p className="mx-auto mt-3 max-w-sm text-sm font-medium text-muted-foreground sm:text-base">
+          {description}
+        </p>
+        <Button onClick={onNewOrder} className="mt-8 bg-gradient-primary px-8 font-bold" size="lg">
+          {buttonLabel}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function paymentStatusLabel(status?: OrderInfo["paymentStatus"]) {
   const labels: Record<string, string> = {
     pending: "Pendente",
@@ -260,6 +335,8 @@ function normalizeStatus(status?: string) {
     entregue_mesa: "delivered_to_table",
     picked_up: "picked_up",
     retirado: "picked_up",
+    cancelled: "cancelled",
+    cancelado: "cancelled",
   };
   return map[status ?? ""] ?? "received";
 }

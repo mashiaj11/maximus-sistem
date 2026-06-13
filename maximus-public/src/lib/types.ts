@@ -122,6 +122,9 @@ export interface OrderInfo {
   customerName?: string;
   customerPhone?: string;
   customerId?: string;
+  recipientName?: string;
+  recipientPhone?: string;
+  recipientNotes?: string;
   address?: CustomerAddress;
   items?: CustomerOrderItem[];
   unitId?: string;
@@ -135,8 +138,15 @@ export interface OrderInfo {
   deliveryLng?: number;
   deliveryDistanceKm?: number | null;
   deliveryFee?: number;
+  deliveryRangeId?: string | null;
   minimumOrderValue?: number;
-  deliveryLocationSource?: "gps" | "pin" | "geocoding" | "manual_unavailable";
+  deliveryLocationSource?:
+    | "gps"
+    | "pin"
+    | "geocoding"
+    | "geocoded_address"
+    | "manual_pin"
+    | "manual_unavailable";
   geocodingStatus?:
     | "gps_confirmed"
     | "geocoded"

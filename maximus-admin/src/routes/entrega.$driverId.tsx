@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
-import { Check, Clock, MapPin, Navigation, PackageCheck, Truck } from "lucide-react";
+import { Check, Clock, MapPin, Navigation, PackageCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AdminProvider, formatBRL, formatElapsed, formatTime, useAdmin } from "@/admin/store";
 import { STATUS_LABELS } from "@/admin/data/statuses";
@@ -28,8 +28,6 @@ function DriverPanel() {
     allCouriers,
     allOrders,
     units,
-    updateStatus,
-    setPayment,
     updateDriverLocation,
     startDeliveryNavigation,
     completeDeliveryByDriver,
@@ -284,7 +282,7 @@ function DriverPanel() {
                             </p>
                           </div>
 
-                          <div className="mt-4 grid gap-2 sm:grid-cols-[2fr_1fr]">
+                          <div className="mt-4 grid gap-2 sm:grid-cols-2">
                             <button
                               type="button"
                               onClick={() => {
@@ -296,13 +294,6 @@ function DriverPanel() {
                               IR <Navigation className="h-5 w-5" />
                             </button>
                             <button
-                              onClick={() => updateStatus(order.id, "out_for_delivery", "driver")}
-                              disabled={order.status === "out_for_delivery"}
-                              className="inline-flex items-center justify-center gap-2 rounded-lg bg-secondary px-4 py-3 text-sm font-extrabold hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              Saiu <Truck className="h-4 w-4" />
-                            </button>
-                            <button
                               onClick={() =>
                                 completeDeliveryByDriver(
                                   order.id,
@@ -311,16 +302,12 @@ function DriverPanel() {
                                 )
                               }
                               disabled={order.delivery_completed_by_driver}
-                              className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-extrabold text-primary-foreground sm:col-span-2"
+                              className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-extrabold text-primary-foreground"
                             >
-                              {order.delivery_completed_by_driver ? "Já finalizado" : "Entregue"}{" "}
+                              {order.delivery_completed_by_driver
+                                ? "Já finalizado"
+                                : "Finalizar entrega"}{" "}
                               <Check className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => setPayment(order.id, "confirmed", "driver")}
-                              className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-extrabold text-white sm:col-span-2"
-                            >
-                              Pagamento recebido <Check className="h-4 w-4" />
                             </button>
                           </div>
 
@@ -496,10 +483,10 @@ function openNavigation(
     deliveryLat != null && deliveryLng != null
       ? `https://waze.com/ul?ll=${deliveryLat},${deliveryLng}&navigate=yes`
       : `https://waze.com/ul?q=${encodeURIComponent(address)}&navigate=yes`;
-  const maps =
+  const osm =
     deliveryLat != null && deliveryLng != null
-      ? `https://www.google.com/maps/dir/?api=1&destination=${deliveryLat},${deliveryLng}`
-      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+      ? `https://www.openstreetmap.org/directions?to=${deliveryLat},${deliveryLng}`
+      : `https://www.openstreetmap.org/search?query=${encodeURIComponent(address)}`;
   const userAgent = navigator.userAgent.toLowerCase();
   const isMobile = /android|iphone|ipad|ipod/.test(userAgent);
 
@@ -513,7 +500,7 @@ function openNavigation(
     distanciaAteDestinoKm: driverDistanceKm(driverLocation, order),
     metodo: deliveryLat != null && deliveryLng != null ? "coordenadas_pedido" : "endereco",
     wazeUrl: waze,
-    fallbackMapsUrl: maps,
+    fallbackOsmUrl: osm,
   });
 
   if (!isMobile) {
@@ -524,7 +511,7 @@ function openNavigation(
   window.location.href = waze;
   window.setTimeout(() => {
     if (document.visibilityState === "visible") {
-      window.location.href = maps;
+      window.location.href = osm;
     }
   }, 1400);
 }

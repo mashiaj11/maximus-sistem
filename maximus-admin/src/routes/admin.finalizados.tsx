@@ -1,6 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import { TypeBadge } from "@/admin/components/Badges";
 import { STATUS_LABELS, isFinalStatus } from "@/admin/data/statuses";
@@ -53,10 +52,11 @@ function driverName(order: Order) {
 }
 
 function FinalizadosPage() {
-  const { orders, selectedUnit, resetOperationalData } = useAdmin();
+  const { orders, selectedUnit } = useAdmin();
   const [period, setPeriod] = useState<PeriodKey>("today");
   const [customStart, setCustomStart] = useState(todayInputValue());
   const [customEnd, setCustomEnd] = useState(todayInputValue());
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const finishedOrders = [...orders]
     .filter((order) => isFinalStatus(order.status))
     .filter((order) => isInPeriod(finishedAt(order), period, customStart, customEnd))
@@ -69,23 +69,6 @@ function FinalizadosPage() {
         title="Finalizados"
         subtitle={`${selectedUnit?.name ?? "Unidade"} · ${finishedOrders.length} pedidos finalizados`}
       />
-      <div className="mb-4 flex justify-end">
-        <button
-          type="button"
-          onClick={async () => {
-            if (window.prompt("Digite ZERAR para limpar finalizados") !== "ZERAR") return;
-            try {
-              await resetOperationalData("finished_deliveries");
-              toast.success("Finalizados limpos com sucesso.");
-            } catch {
-              toast.error("Não foi possível limpar finalizados.");
-            }
-          }}
-          className="rounded-lg bg-destructive px-4 py-2 text-sm font-extrabold text-white"
-        >
-          Limpar finalizados
-        </button>
-      </div>
 
       <PeriodFilter
         period={period}
@@ -130,50 +113,58 @@ function FinalizadosPage() {
           Nenhum pedido finalizado nesta unidade.
         </section>
       ) : (
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <section className="space-y-2">
           {finishedOrders.map((order) => (
             <article
               key={order.id}
-              className="rounded-xl border border-border bg-card p-4 shadow-sm"
+              className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-2xl font-black">#{order.number}</p>
-                  <p className="mt-1 text-sm font-bold">
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedOrderId((current) => (current === order.id ? null : order.id))
+                }
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-lg font-black">#{order.number}</p>
+                    <TypeBadge type={order.type} />
+                    <span className="text-xs font-bold text-muted-foreground">
+                      {STATUS_LABELS[order.status]}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-sm font-bold">
                     {order.type === "mesa" ? orderLocation(order) : order.customerName}
                   </p>
                 </div>
-                <TypeBadge type={order.type} />
-              </div>
+                <div className="shrink-0 text-right">
+                  <p className="font-black text-primary">{formatBRL(order.total)}</p>
+                  <p className="text-xs text-muted-foreground">{formatTime(finishedAt(order))}</p>
+                </div>
+              </button>
 
-              <div className="mt-4 grid gap-2 text-sm">
-                <InfoRow label="Status" value={STATUS_LABELS[order.status]} />
-                <InfoRow label="Pagamento" value={paymentLabel(order)} />
-                <InfoRow label="Total" value={formatBRL(order.total)} strong />
-                <InfoRow label="Criado" value={formatTime(order.createdAt)} />
-                <InfoRow label="Finalizado" value={formatTime(finishedAt(order))} />
-                <InfoRow label="Tempo total" value={totalTime(order)} />
-                {driverName(order) && (
-                  <InfoRow label="Entregador" value={driverName(order) ?? ""} />
-                )}
-              </div>
-
-              <div className="mt-4 rounded-lg border border-border bg-background p-3">
-                <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                  Itens
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {itemSummary(order) || "Sem itens"}
-                </p>
-              </div>
-
-              <Link
-                to="/admin/pedidos/$id"
-                params={{ id: order.id }}
-                className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-secondary px-3 py-2 text-sm font-semibold hover:bg-accent"
-              >
-                Ver detalhes
-              </Link>
+              {expandedOrderId === order.id && (
+                <>
+                  <div className="mt-4 grid gap-2 text-sm md:grid-cols-2">
+                    <InfoRow label="Pagamento" value={paymentLabel(order)} />
+                    <InfoRow label="Criado" value={formatTime(order.createdAt)} />
+                    <InfoRow label="Finalizado" value={formatTime(finishedAt(order))} />
+                    <InfoRow label="Tempo total" value={totalTime(order)} />
+                    {driverName(order) && (
+                      <InfoRow label="Entregador" value={driverName(order) ?? ""} />
+                    )}
+                  </div>
+                  <div className="mt-4 rounded-lg border border-border bg-background p-3">
+                    <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                      Itens
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {itemSummary(order) || "Sem itens"}
+                    </p>
+                  </div>
+                </>
+              )}
             </article>
           ))}
         </section>

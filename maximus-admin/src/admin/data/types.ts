@@ -37,6 +37,9 @@ export interface Order {
   number: number;
   customerName: string;
   customerPhone?: string;
+  recipientName?: string;
+  recipientPhone?: string;
+  recipientNotes?: string;
   type: OrderType;
   status: OrderStatus;
   paymentMethod: PaymentMethod;
@@ -67,8 +70,20 @@ export interface Order {
   delivery_lng?: number;
   deliveryLat?: number;
   deliveryLng?: number;
-  deliveryLocationSource?: "gps" | "pin" | "geocoding" | "manual_unavailable";
-  delivery_location_source?: "gps" | "pin" | "geocoding" | "manual_unavailable";
+  deliveryLocationSource?:
+    | "gps"
+    | "pin"
+    | "geocoding"
+    | "geocoded_address"
+    | "manual_pin"
+    | "manual_unavailable";
+  delivery_location_source?:
+    | "gps"
+    | "pin"
+    | "geocoding"
+    | "geocoded_address"
+    | "manual_pin"
+    | "manual_unavailable";
   geocodingStatus?:
     | "gps_confirmed"
     | "geocoded"
@@ -256,26 +271,6 @@ export interface DeliveryRule {
   estimatedMinutes: number;
   deliveryFee: number;
   isActive: boolean;
-}
-
-export interface DeliveryNeighborhoodRule {
-  id: string;
-  unitId: UnitId;
-  neighborhood: string;
-  estimatedMinutes: number;
-  deliveryFee: number;
-  isActive: boolean;
-}
-
-export type AdminUserRole = "gestor" | "atendente" | "cozinha" | "entregador";
-
-export interface AdminUser {
-  id: string;
-  unitId: UnitId;
-  name: string;
-  contact: string;
-  role: AdminUserRole;
-  active: boolean;
 }
 
 export type DeliverySettlementStatus = "open" | "paid" | "cancelled";

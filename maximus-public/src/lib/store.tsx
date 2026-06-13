@@ -116,6 +116,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setOrder(info);
     setItems([]);
   }, []);
+  const clearOrder = useCallback(() => setOrder(null), []);
 
   const cartValue: CartContextValue = {
     items,
@@ -132,7 +133,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   return (
     <CartContext.Provider value={cartValue}>
-      <OrderContext.Provider value={{ order, placeOrder }}>{children}</OrderContext.Provider>
+      <OrderContext.Provider value={{ order, placeOrder, clearOrder }}>
+        {children}
+      </OrderContext.Provider>
     </CartContext.Provider>
   );
 }
@@ -148,6 +151,7 @@ export function useCart() {
 interface OrderContextValue {
   order: OrderInfo | null;
   placeOrder: (info: OrderInfo) => void;
+  clearOrder: () => void;
 }
 
 const OrderContext = createContext<OrderContextValue | null>(null);

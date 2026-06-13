@@ -4,7 +4,6 @@ import type {
   Category,
   Courier,
   CourierStatus,
-  DeliveryNeighborhoodRule,
   DeliveryRule,
   KitchenPrintSettings,
   Order,
@@ -63,6 +62,8 @@ type StoreTableRow = {
   qr_code_data: string;
   status: TableStatus;
   active: boolean;
+  is_active: boolean | null;
+  deleted_at: string | null;
   created_at: string;
 };
 
@@ -83,15 +84,6 @@ type DeliveryRuleRow = {
   id: string;
   unit_id: string;
   max_distance_km: number;
-  estimated_minutes: number;
-  delivery_fee: number;
-  active: boolean;
-};
-
-type DeliveryNeighborhoodRuleRow = {
-  id: string;
-  unit_id: string;
-  neighborhood: string;
   estimated_minutes: number;
   delivery_fee: number;
   active: boolean;
@@ -148,6 +140,9 @@ type OrderRow = {
   payment_method: PaymentMethod | null;
   customer_name: string | null;
   customer_phone: string | null;
+  recipient_name: string | null;
+  recipient_phone: string | null;
+  recipient_notes: string | null;
   delivery_fee: number;
   delivery_fee_snapshot: number | null;
   minimum_order_value: number | null;
@@ -408,7 +403,7 @@ function mapTable(row: StoreTableRow, slugById: Map<string, UnitId>): Restaurant
     unitId,
     number: row.table_number,
     status: row.status,
-    active: row.active,
+    active: row.active && row.is_active !== false && row.deleted_at == null,
     menuLink: row.public_url,
     publicUrl: row.public_url,
     qrCodeData: row.qr_code_data,
@@ -445,37 +440,6 @@ function mapDeliveryRule(row: DeliveryRuleRow, slugById: Map<string, UnitId>): D
     deliveryFee: Number(row.delivery_fee),
     isActive: row.active,
   };
-}
-
-function mapDeliveryNeighborhoodRule(
-  row: DeliveryNeighborhoodRuleRow,
-  slugById: Map<string, UnitId>,
-): DeliveryNeighborhoodRule | null {
-  const unitId = slugById.get(row.unit_id);
-  if (!unitId) return null;
-
-  return {
-    id: row.id,
-    unitId,
-    neighborhood: row.neighborhood,
-    estimatedMinutes: row.estimated_minutes,
-    deliveryFee: Number(row.delivery_fee),
-    isActive: row.active,
-  };
-}
-
-async function loadOptionalDeliveryNeighborhoodRules() {
-  const { data, error } = await getSupabaseClient()
-    .from("delivery_neighborhood_rules")
-    .select("id, unit_id, neighborhood, estimated_minutes, delivery_fee, active")
-    .order("neighborhood", { ascending: true });
-  if (error) {
-    if (error.code === "42P01" || error.message.includes("delivery_neighborhood_rules")) {
-      return [];
-    }
-    throw new Error(error.message);
-  }
-  return (data ?? []) as DeliveryNeighborhoodRuleRow[];
 }
 
 function mapOrder(
@@ -517,6 +481,9 @@ function mapOrder(
     number: row.order_number,
     customerName: row.customer_name ?? "Cliente",
     customerPhone: row.customer_phone ?? undefined,
+    recipientName: row.recipient_name ?? undefined,
+    recipientPhone: row.recipient_phone ?? undefined,
+    recipientNotes: row.recipient_notes ?? undefined,
     type: APP_TYPE_BY_DB[row.order_type],
     status: row.status,
     paymentMethod: row.payment_method ?? "pix_app",
@@ -593,15 +560,7 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
   )) as UnitRow[];
   const { idBySlug, slugById } = buildUnitLookups(units);
 
-  const [
-    categories,
-    products,
-    tables,
-    couriers,
-    deliveryRules,
-    deliveryNeighborhoodRules,
-    adminSettings,
-  ] = await Promise.all([
+  const [categories, products, tables, couriers, deliveryRules, adminSettings] = await Promise.all([
     selectOrThrow(
       supabase
         .from("categories")
@@ -619,7 +578,12 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
     selectOrThrow(
       supabase
         .from("store_tables")
-        .select("id, unit_id, table_number, public_url, qr_code_data, status, active, created_at")
+        .select(
+          "id, unit_id, table_number, public_url, qr_code_data, status, active, is_active, deleted_at, created_at",
+        )
+        .eq("active", true)
+        .eq("is_active", true)
+        .is("deleted_at", null)
         .order("table_number", { ascending: true }),
     ) as Promise<StoreTableRow[] | null>,
     selectOrThrow(
@@ -637,7 +601,6 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
         .select("id, unit_id, max_distance_km, estimated_minutes, delivery_fee, active")
         .order("max_distance_km", { ascending: true }),
     ) as Promise<DeliveryRuleRow[] | null>,
-    loadOptionalDeliveryNeighborhoodRules(),
     selectOrThrow(
       supabase
         .from("admin_settings")
@@ -651,7 +614,7 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
     supabase
       .from("orders")
       .select(
-        "id, unit_id, customer_address_id, table_id, delivery_driver_id, delivery_driver_name, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_payout_amount, driver_earned_value, delivery_distance_km, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, driver_id, driver_name, payment_confirmed, delivery_completed_by_driver, kitchen_print_status, kitchen_printed_at, out_for_delivery_at, navigation_started_at, delivered_at, subtotal, total, notes, created_at",
+        "id, unit_id, customer_address_id, table_id, delivery_driver_id, delivery_driver_name, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, recipient_name, recipient_phone, recipient_notes, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_payout_amount, driver_earned_value, delivery_distance_km, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, driver_id, driver_name, payment_confirmed, delivery_completed_by_driver, kitchen_print_status, kitchen_printed_at, out_for_delivery_at, navigation_started_at, delivered_at, subtotal, total, notes, created_at",
       )
       .order("created_at", { ascending: false }),
   )) as OrderRow[];
@@ -717,11 +680,6 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
     deliveryRules: (deliveryRules ?? [])
       .map((rule) => mapDeliveryRule(rule, slugById))
       .filter((rule): rule is DeliveryRule => Boolean(rule)),
-    deliveryNeighborhoodRules: (deliveryNeighborhoodRules ?? [])
-      .map((rule) => mapDeliveryNeighborhoodRule(rule, slugById))
-      .filter((rule): rule is NonNullable<ReturnType<typeof mapDeliveryNeighborhoodRule>> =>
-        Boolean(rule),
-      ),
   };
 }
 
@@ -1051,23 +1009,37 @@ export async function setSupabaseProductAvailable(productId: string, available: 
 
 export async function insertSupabaseTable(
   unitId: UnitId,
-  tableNumber: number,
+  tableNumber?: number,
 ): Promise<RestaurantTable> {
   assertConfigured();
   const supabase = getSupabaseClient();
   const unitRow = (await selectOrThrow(
     supabase.from("units").select("id, slug").eq("slug", unitId).single(),
   )) as UnitRow;
-  const publicUrl = `/menu?unidade=${unitId}&mesa=${String(tableNumber).padStart(2, "0")}`;
+  const lastRows = (await selectOrThrow(
+    supabase
+      .from("store_tables")
+      .select("table_number")
+      .eq("unit_id", unitRow.id)
+      .order("table_number", { ascending: false })
+      .limit(1),
+  )) as Array<{ table_number: number }>;
+  const nextNumber = Math.max(tableNumber ?? 0, (lastRows[0]?.table_number ?? 0) + 1);
+  const publicUrl = `/menu?unidade=${unitId}&mesa=${String(nextNumber).padStart(2, "0")}`;
   const { data, error } = await supabase
     .from("store_tables")
     .insert({
       unit_id: unitRow.id,
-      table_number: tableNumber,
+      table_number: nextNumber,
       public_url: publicUrl,
       qr_code_data: publicUrl,
+      active: true,
+      is_active: true,
+      deleted_at: null,
     })
-    .select("id, unit_id, table_number, public_url, qr_code_data, status, active, created_at")
+    .select(
+      "id, unit_id, table_number, public_url, qr_code_data, status, active, is_active, deleted_at, created_at",
+    )
     .single();
   if (error) throw new Error(error.message);
   const table = mapTable(data as StoreTableRow, new Map([[unitRow.id, unitRow.slug]]));
@@ -1082,9 +1054,54 @@ export async function updateSupabaseTable(
   assertConfigured();
   const { error } = await getSupabaseClient()
     .from("store_tables")
-    .update({ status: patch.status, active: patch.active })
+    .update({ status: patch.status, active: patch.active, is_active: patch.active })
     .eq("id", tableId);
   if (error) throw new Error(error.message);
+}
+
+export async function deleteSupabaseTable(tableId: string, unitId: UnitId) {
+  assertConfigured();
+  const supabase = getSupabaseClient();
+  const unitRow = (await selectOrThrow(
+    supabase.from("units").select("id, slug").eq("slug", unitId).single(),
+  )) as Pick<UnitRow, "id" | "slug">;
+  const tableRows = (await selectOrThrow(
+    supabase
+      .from("store_tables")
+      .select("id, unit_id, table_number")
+      .eq("id", tableId)
+      .eq("unit_id", unitRow.id)
+      .limit(1),
+  )) as Array<Pick<StoreTableRow, "id" | "unit_id" | "table_number">>;
+  const table = tableRows[0];
+  if (!table) throw new Error("Mesa não encontrada nesta unidade.");
+
+  const orders = (await selectOrThrow(
+    supabase.from("orders").select("id").eq("table_id", tableId).limit(1),
+  )) as Array<{ id: string }>;
+  const operation = orders.length > 0 ? "soft_delete" : "delete";
+
+  if (operation === "delete") {
+    const { error } = await supabase
+      .from("store_tables")
+      .delete()
+      .eq("id", tableId)
+      .eq("unit_id", unitRow.id);
+    if (error) throw new Error(error.message);
+    return { operation };
+  }
+
+  const { error } = await supabase
+    .from("store_tables")
+    .update({
+      active: false,
+      is_active: false,
+      deleted_at: new Date().toISOString(),
+    })
+    .eq("id", tableId)
+    .eq("unit_id", unitRow.id);
+  if (error) throw new Error(error.message);
+  return { operation };
 }
 
 export async function insertSupabaseCourier(
@@ -1192,71 +1209,18 @@ export async function loginSupabaseDriver(username: string, pin: string) {
   return driver.id;
 }
 
-export type OperationalResetScope =
-  | "orders"
-  | "customers"
-  | "payments"
-  | "finished_deliveries"
-  | "all_operational";
-
-export async function resetSupabaseOperationalData(scope: OperationalResetScope) {
+export async function resetSupabaseOperationalData(params: {
+  unitSlug: UnitId;
+  adminPin: string;
+  confirmation: "ZERAR";
+}) {
   assertConfigured();
-  const supabase = getSupabaseClient();
-
-  if (scope === "payments" || scope === "all_operational") {
-    const { error } = await supabase
-      .from("payments")
-      .delete()
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-    if (error) throw new Error(error.message);
-  }
-
-  if (scope === "orders" || scope === "all_operational") {
-    const { error } = await supabase
-      .from("orders")
-      .delete()
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-    if (error) throw new Error(error.message);
-  }
-
-  if (scope === "finished_deliveries") {
-    const { error } = await supabase
-      .from("orders")
-      .delete()
-      .in("status", ["delivered", "delivered_to_table", "picked_up", "cancelled"]);
-    if (error) throw new Error(error.message);
-  }
-
-  if (scope === "customers") {
-    const deletedAt = new Date().toISOString();
-    const { error: addressError } = await supabase
-      .from("customer_addresses")
-      .update({ is_active: false, deleted_at: deletedAt })
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-    if (addressError) throw new Error(addressError.message);
-
-    const customers = (await selectOrThrow(
-      supabase.from("customers").select("id").limit(10000),
-    )) as Array<{ id: string }>;
-    for (const customer of customers) {
-      const { error } = await supabase
-        .from("customers")
-        .update({
-          name: "Cliente removido",
-          phone: `removed-${customer.id}`,
-        })
-        .eq("id", customer.id);
-      if (error) throw new Error(error.message);
-    }
-  }
-
-  if (scope === "all_operational") {
-    const { error } = await supabase
-      .from("customers")
-      .delete()
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-    if (error) throw new Error(error.message);
-  }
+  const { error } = await getSupabaseClient().rpc("reset_operational_data", {
+    p_unit_slug: params.unitSlug,
+    p_admin_pin: params.adminPin,
+    p_confirmation: params.confirmation,
+  });
+  if (error) throw new Error(error.message);
 }
 
 export async function insertSupabaseDeliveryRule(
@@ -1307,70 +1271,5 @@ export async function updateSupabaseDeliveryRule(
 export async function deleteSupabaseDeliveryRule(ruleId: string) {
   assertConfigured();
   const { error } = await getSupabaseClient().from("delivery_fee_rules").delete().eq("id", ruleId);
-  if (error) throw new Error(error.message);
-}
-
-export async function insertSupabaseDeliveryNeighborhoodRule(
-  unitId: UnitId,
-  rule: {
-    neighborhood: string;
-    estimatedMinutes: number;
-    deliveryFee: number;
-    isActive: boolean;
-  },
-) {
-  assertConfigured();
-  const supabase = getSupabaseClient();
-  const unitRow = (await selectOrThrow(
-    supabase.from("units").select("id, slug").eq("slug", unitId).single(),
-  )) as UnitRow;
-  const { data, error } = await supabase
-    .from("delivery_neighborhood_rules")
-    .insert({
-      unit_id: unitRow.id,
-      neighborhood: rule.neighborhood,
-      estimated_minutes: rule.estimatedMinutes,
-      delivery_fee: rule.deliveryFee,
-      active: rule.isActive,
-    })
-    .select("id, unit_id, neighborhood, estimated_minutes, delivery_fee, active")
-    .single();
-  if (error) throw new Error(error.message);
-  const mapped = mapDeliveryNeighborhoodRule(
-    data as DeliveryNeighborhoodRuleRow,
-    new Map([[unitRow.id, unitRow.slug]]),
-  );
-  if (!mapped) throw new Error("Regra de bairro criada sem unidade valida.");
-  return mapped;
-}
-
-export async function updateSupabaseDeliveryNeighborhoodRule(
-  ruleId: string,
-  patch: Partial<{
-    neighborhood: string;
-    estimatedMinutes: number;
-    deliveryFee: number;
-    isActive: boolean;
-  }>,
-) {
-  assertConfigured();
-  const { error } = await getSupabaseClient()
-    .from("delivery_neighborhood_rules")
-    .update({
-      neighborhood: patch.neighborhood,
-      estimated_minutes: patch.estimatedMinutes,
-      delivery_fee: patch.deliveryFee,
-      active: patch.isActive,
-    })
-    .eq("id", ruleId);
-  if (error) throw new Error(error.message);
-}
-
-export async function deleteSupabaseDeliveryNeighborhoodRule(ruleId: string) {
-  assertConfigured();
-  const { error } = await getSupabaseClient()
-    .from("delivery_neighborhood_rules")
-    .delete()
-    .eq("id", ruleId);
   if (error) throw new Error(error.message);
 }

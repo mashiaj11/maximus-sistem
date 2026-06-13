@@ -3,6 +3,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Check, Copy, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import { SiteHeader } from "@/components/SiteHeader";
+import { LocationPickerMap } from "@/components/MapView";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,12 +19,13 @@ import type {
   OrderTrackMode,
 } from "@/lib/types";
 import { normalizeMesa } from "@/lib/utils";
-import { findNearestOpenUnit, type GeoUnit } from "@/lib/geo";
+import { type GeoUnit } from "@/lib/geo";
 import {
+  calculateDeliveryRoute,
   formatManualAddress,
-  geocodeManualAddress,
   reverseGeocodeCoordinates,
   type GeocodingStatus,
+  type ManualAddressForGeocoding,
 } from "@/lib/geocoding";
 import {
   deleteAddress,
@@ -38,7 +40,6 @@ import {
 import {
   createOrderInSupabase,
   findPublicTable,
-  loadDeliveryNeighborhoodRules,
   loadDeliveryRules,
   loadPublicMenu,
   loadPublicTables,
@@ -46,26 +47,22 @@ import {
 } from "@/lib/supabase-data";
 
 type DeliveryRuleQuote = {
+  id: string;
   maxDistanceKm: number;
   deliveryFee: number;
   estimatedMinutes: number;
-};
-
-type DeliveryNeighborhoodRuleQuote = {
-  id: string;
-  unitId: string;
-  neighborhood: string;
-  deliveryFee: number;
-  estimatedMinutes: number;
+  isActive: boolean;
 };
 
 type DeliveryQuote = {
   fee: number | null;
   distanceKm: number | null;
+  deliveryRangeId: string | null;
+  estimatedMinutes: number | null;
   minimumOrderValue: number;
   maxDistanceKm: number;
   isFree: boolean;
-  method: "gps" | "geocoding" | "bairro" | "fallback" | "blocked";
+  method: "gps" | "manual_pin" | "blocked";
   blockedReason?: string;
 };
 
@@ -109,9 +106,83 @@ const EMPTY_ADDRESS = {
   rua: "",
   numero: "",
   bairro: "",
+  cep: "",
   complemento: "",
   referencia: "",
 };
+
+type DeliveryLocationSource = "gps" | "manual_pin" | "manual_unavailable";
+
+type ResolvedDelivery = {
+  location: { latitude: number; longitude: number } | null;
+  unit: GeoUnit | null;
+  distanceKm: number | null;
+  deliveryRangeId: string | null;
+  locationSource: DeliveryLocationSource;
+  geocodingStatus: GeocodingStatus;
+  displayAddress?: string;
+};
+
+type DeliveryRouteCandidate = GeoUnit & {
+  distanceKm: number;
+  deliveryLat: number;
+  deliveryLng: number;
+  durationMinutes: number | null;
+  rawAddress: string | null;
+  deliveryFee: number | null;
+  deliveryRangeId: string | null;
+  minimumOrderValueFromFunction: number | null;
+  totalFromFunction: number | null;
+};
+
+async function resolveNearestDeliveryCandidate(
+  units: GeoUnit[],
+  subtotal: number,
+  location: { latitude: number; longitude: number },
+): Promise<DeliveryRouteCandidate | null> {
+  const firstUnit = units[0];
+  if (!firstUnit) return null;
+  const unitsWithRules = await Promise.all(
+    units.map(async (unit) => ({
+      ...unit,
+      deliveryRules: await loadDeliveryRules(unit.id),
+    })),
+  );
+  const calculation = await calculateDeliveryRoute({
+    unitLat: firstUnit.latitude,
+    unitLng: firstUnit.longitude,
+    unitId: firstUnit.id,
+    unitName: firstUnit.name,
+    subtotal,
+    units: unitsWithRules,
+    deliveryLat: location.latitude,
+    deliveryLng: location.longitude,
+  });
+  const selectedUnit =
+    units.find((unit) => unit.id === calculation.unitId) ??
+    units.find((unit) => unit.name === calculation.unitName) ??
+    firstUnit;
+  return {
+    ...selectedUnit,
+    distanceKm: calculation.distanceKm,
+    deliveryLat: calculation.deliveryLat,
+    deliveryLng: calculation.deliveryLng,
+    durationMinutes: calculation.durationMinutes,
+    rawAddress: calculation.rawAddress,
+    deliveryFee: calculation.deliveryFee,
+    deliveryRangeId: calculation.deliveryRangeId,
+    minimumOrderValueFromFunction: calculation.minimumOrderValue,
+    totalFromFunction: calculation.total,
+  };
+}
+
+async function findNearestUnitByRoute(
+  location: { latitude: number; longitude: number },
+  units: GeoUnit[],
+  subtotal: number,
+): Promise<DeliveryRouteCandidate | null> {
+  return resolveNearestDeliveryCandidate(units, subtotal, location);
+}
 
 function normalizeTableNumber(value?: string) {
   return value ? String(Number(value)).padStart(2, "0") : "";
@@ -144,17 +215,16 @@ function CheckoutPage() {
   const [locationConfirmed, setLocationConfirmed] = useState(false);
   const [deliveryUnit, setDeliveryUnit] = useState<GeoUnit | null>(null);
   const [deliveryRules, setDeliveryRules] = useState<DeliveryRuleQuote[]>([]);
-  const [deliveryNeighborhoodRules, setDeliveryNeighborhoodRules] = useState<
-    DeliveryNeighborhoodRuleQuote[]
-  >([]);
   const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
+  const [deliveryRangeId, setDeliveryRangeId] = useState<string | null>(null);
   const [deliveryLocation, setDeliveryLocation] = useState<{
     latitude: number;
     longitude: number;
   } | null>(null);
-  const [deliveryLocationSource, setDeliveryLocationSource] = useState<
-    "gps" | "pin" | "geocoding" | "manual_unavailable"
-  >("manual_unavailable");
+  const [deliveryLocationSource, setDeliveryLocationSource] =
+    useState<DeliveryLocationSource>("manual_unavailable");
+  const [deliveryAddressMode, setDeliveryAddressMode] = useState<"gps" | "other" | null>(null);
+  const [pendingDelivery, setPendingDelivery] = useState<ResolvedDelivery | null>(null);
   const [geocodingStatus, setGeocodingStatus] = useState<GeocodingStatus>("not_needed");
   const [locationDenied, setLocationDenied] = useState(false);
   const [gpsAuthorized, setGpsAuthorized] = useState(false);
@@ -211,9 +281,6 @@ function CheckoutPage() {
     loadPublicTables(selectedUnitSlug)
       .then(setUnitTables)
       .catch(() => setUnitTables([]));
-    loadDeliveryNeighborhoodRules()
-      .then(setDeliveryNeighborhoodRules)
-      .catch(() => setDeliveryNeighborhoodRules([]));
   }, [mesa, selectedUnitSlug]);
 
   useEffect(() => {
@@ -249,6 +316,9 @@ function CheckoutPage() {
 
     return () => window.clearTimeout(timeout);
   }, [currentCustomer?.phone, phone]);
+
+  const isAddressComplete =
+    Boolean(address.rua.trim()) && Boolean(address.numero.trim()) && Boolean(address.bairro.trim());
 
   if (items.length === 0) {
     return (
@@ -311,6 +381,7 @@ function CheckoutPage() {
       rua: saved.street,
       numero: saved.number,
       bairro: saved.neighborhood,
+      cep: "",
       complemento: saved.complement ?? "",
       referencia: saved.reference ?? "",
     });
@@ -319,7 +390,8 @@ function CheckoutPage() {
 
   function applySavedAddressLocation(saved: CustomerAddress) {
     if (saved.latitude == null || saved.longitude == null) return;
-    applyDeliveryLocation({ latitude: saved.latitude, longitude: saved.longitude }, "gps");
+    setDeliveryAddressMode("other");
+    applyDeliveryLocation({ latitude: saved.latitude, longitude: saved.longitude }, "manual_pin");
   }
 
   async function saveCurrentAddress(customerId: string, location = deliveryLocation) {
@@ -355,23 +427,25 @@ function CheckoutPage() {
   ) {
     if (submitting) return;
     setSubmitting(true);
-    let resolvedDelivery: {
-      location: { latitude: number; longitude: number } | null;
-      unit: GeoUnit | null;
-      distanceKm: number | null;
-      locationSource: "gps" | "pin" | "geocoding" | "manual_unavailable";
-      geocodingStatus: GeocodingStatus;
-    } | null = null;
+    let resolvedDelivery: ResolvedDelivery | null = null;
     if (mode === "delivery") {
-      const geocoded = await resolveManualAddressLocation();
-      resolvedDelivery = {
-        location: geocoded?.location ?? deliveryLocation,
-        unit: geocoded?.unit ?? resolveManualDeliveryUnit(),
-        distanceKm: geocoded?.distanceKm ?? deliveryDistanceKm,
-        locationSource: geocoded?.status === "geocoded" ? "geocoding" : deliveryLocationSource,
-        geocodingStatus:
-          geocoded?.status ?? (deliveryLocation ? geocodingStatus : "bairro_fallback"),
-      };
+      resolvedDelivery =
+        pendingDelivery ??
+        (deliveryAddressMode === "gps" && deliveryLocation
+          ? {
+              location: deliveryLocation,
+              unit: deliveryUnit,
+              distanceKm: deliveryDistanceKm,
+              deliveryRangeId,
+              locationSource: "gps",
+              geocodingStatus,
+            }
+          : await resolveManualAddressLocation());
+      if (!resolvedDelivery?.location) {
+        toast.error("Confirme o local da entrega pelo GPS ou marque no mapa.");
+        setSubmitting(false);
+        return;
+      }
     }
     const unit =
       mode === "delivery"
@@ -415,7 +489,6 @@ function CheckoutPage() {
             unit,
             distanceKm: resolvedDelivery?.distanceKm ?? null,
             rules: await loadRulesForResolvedUnit(unit),
-            neighborhoodRules: deliveryNeighborhoodRules,
             neighborhood: usedAddress?.neighborhood ?? address.bairro,
             locationSource: resolvedDelivery?.locationSource ?? deliveryLocationSource,
           })
@@ -463,6 +536,9 @@ function CheckoutPage() {
       customerName: name || undefined,
       customerPhone: customer?.phone ?? phone,
       customerId: customer?.id,
+      recipientName: undefined,
+      recipientPhone: undefined,
+      recipientNotes: undefined,
       address: usedAddress,
       items: items.map((item) => ({
         name: item.product.name,
@@ -476,6 +552,7 @@ function CheckoutPage() {
       unitLng: unit?.longitude,
       deliveryDistanceKm: resolvedDelivery?.distanceKm ?? null,
       deliveryFee,
+      deliveryRangeId: resolvedDelivery?.deliveryRangeId ?? quote?.deliveryRangeId ?? null,
       minimumOrderValue,
       deliveryLat: resolvedDelivery?.location?.latitude,
       deliveryLng: resolvedDelivery?.location?.longitude,
@@ -503,6 +580,7 @@ function CheckoutPage() {
         tableId,
         deliveryFee,
         deliveryDistanceKm: resolvedDelivery?.distanceKm ?? null,
+        deliveryRangeId: resolvedDelivery?.deliveryRangeId ?? quote?.deliveryRangeId ?? null,
       });
       const order: OrderInfo = {
         ...draft,
@@ -532,7 +610,7 @@ function CheckoutPage() {
     }
   }
 
-  function useGeolocation() {
+  function requestGeolocation() {
     if (!navigator.geolocation) {
       setLocationDenied(true);
       setStep("addressManual");
@@ -540,6 +618,8 @@ function CheckoutPage() {
     }
 
     setLocating(true);
+    setDeliveryAddressMode("gps");
+    setPendingDelivery(null);
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const location = {
@@ -548,7 +628,14 @@ function CheckoutPage() {
         };
         console.info("[Maximus][checkout][gps] coords capturadas", location);
         setGpsAuthorized(true);
-        const nearest = applyDeliveryLocation(location, "gps");
+        let nearest: DeliveryRouteCandidate | null = null;
+        try {
+          nearest = await applyDeliveryLocation(location, "gps");
+        } catch (error) {
+          setLocating(false);
+          toast.error(error instanceof Error ? error.message : "Não foi possível calcular a rota.");
+          return;
+        }
         let reverseResult: Awaited<ReturnType<typeof reverseGeocodeCoordinates>> = null;
         try {
           reverseResult = await reverseGeocodeCoordinates(location.latitude, location.longitude);
@@ -581,7 +668,6 @@ function CheckoutPage() {
           unit: nearest,
           distanceKm: nearest?.distanceKm ?? null,
           rules: gpsRules,
-          neighborhoodRules: deliveryNeighborhoodRules,
           neighborhood: reverseResult?.neighborhood ?? address.bairro,
           locationSource: "gps",
         });
@@ -606,27 +692,37 @@ function CheckoutPage() {
     );
   }
 
-  function applyDeliveryLocation(
+  async function applyDeliveryLocation(
     location: { latitude: number; longitude: number },
-    source: "gps" | "pin",
+    source: DeliveryLocationSource,
   ) {
-    const nearest = findNearestOpenUnit(location, units);
+    const nearest =
+      (await findNearestUnitByRoute(
+        location,
+        units.filter((unit) => unit.isOpen),
+        subtotal,
+      )) ?? (await findNearestUnitByRoute(location, units, subtotal));
     if (!nearest) {
       setDeliveryLocation(location);
       setDeliveryLocationSource(source);
       setGeocodingStatus(source === "gps" ? "gps_confirmed" : "not_needed");
       setDeliveryUnit(null);
       setDeliveryDistanceKm(null);
+      setDeliveryRangeId(null);
       setLocationConfirmed(true);
       setLocationDenied(false);
       setNoOpenUnits(false);
       return null;
     }
-    setDeliveryLocation(location);
+    setDeliveryLocation({
+      latitude: nearest.deliveryLat,
+      longitude: nearest.deliveryLng,
+    });
     setDeliveryLocationSource(source);
     setGeocodingStatus(source === "gps" ? "gps_confirmed" : "not_needed");
     setDeliveryUnit(nearest);
     setDeliveryDistanceKm(nearest.distanceKm);
+    setDeliveryRangeId(nearest.deliveryRangeId);
     setLocationConfirmed(true);
     setLocationDenied(false);
     setNoOpenUnits(false);
@@ -634,70 +730,95 @@ function CheckoutPage() {
   }
 
   async function resolveManualAddressLocation() {
-    if (deliveryLocation) {
-      return {
-        location: deliveryLocation,
-        unit: deliveryUnit,
-        distanceKm: deliveryDistanceKm,
-        status: "gps_confirmed" as GeocodingStatus,
-      };
-    }
-
     try {
-      const result = await geocodeManualAddress({
+      setPendingDelivery(null);
+      const manualAddress = {
         street: address.rua.trim(),
         number: address.numero.trim(),
         neighborhood: address.bairro.trim(),
         city: "Santarém",
-        state: "PA",
-      });
+        state: "Pará",
+        postalCode: address.cep.trim() || undefined,
+      } satisfies ManualAddressForGeocoding;
 
-      if (!result) {
-        setGeocodingStatus("geocoding_failed");
-        console.info("[Maximus][checkout][delivery-geocoding]", {
-          metodo: "bairro",
-          status: "geocoding_failed",
-          endereco: address,
-        });
-        return null;
+      if (!deliveryLocation) {
+        setDeliveryLocationSource("manual_unavailable");
+        setGeocodingStatus("not_needed");
+        return {
+          location: null,
+          unit: null,
+          distanceKm: null,
+          deliveryRangeId: null,
+          locationSource: "manual_unavailable" as const,
+          geocodingStatus: "not_needed" as GeocodingStatus,
+        };
       }
 
-      const nearest = findNearestOpenUnit(
-        { latitude: result.latitude, longitude: result.longitude },
-        units,
+      const nearest = await applyDeliveryLocation(
+        deliveryLocation,
+        deliveryLocationSource === "gps" ? "gps" : "manual_pin",
       );
       if (!nearest) {
-        setGeocodingStatus("geocoding_failed");
-        return null;
+        return {
+          location: deliveryLocation,
+          unit: null,
+          distanceKm: null,
+          deliveryRangeId: null,
+          locationSource: deliveryLocationSource === "gps" ? "gps" : ("manual_pin" as const),
+          geocodingStatus:
+            deliveryLocationSource === "gps" ? "gps_confirmed" : ("not_needed" as GeocodingStatus),
+        };
       }
 
-      const location = { latitude: result.latitude, longitude: result.longitude };
+      const location = { latitude: nearest.deliveryLat, longitude: nearest.deliveryLng };
       setDeliveryLocation(location);
-      setDeliveryLocationSource("geocoding");
+      setDeliveryLocationSource(deliveryLocationSource === "gps" ? "gps" : "manual_pin");
       setDeliveryUnit(nearest);
       setDeliveryDistanceKm(nearest.distanceKm);
+      setDeliveryRangeId(nearest.deliveryRangeId);
       setLocationConfirmed(true);
-      setGeocodingStatus("geocoded");
+      setGeocodingStatus(deliveryLocationSource === "gps" ? "gps_confirmed" : "not_needed");
+      setDeliveryAddressMode("other");
 
-      console.info("[Maximus][checkout][delivery-geocoding]", {
-        metodo: "geocoding",
-        resultado: result,
-        latitudeCliente: result.latitude,
-        longitudeCliente: result.longitude,
+      console.info("[Maximus][checkout][delivery-pin]", {
+        metodo: deliveryLocationSource === "gps" ? "gps" : "manual_pin",
+        enderecoReferencia: formatManualAddress(manualAddress),
+        latitudeCliente: nearest.deliveryLat,
+        longitudeCliente: nearest.deliveryLng,
         unidadeAtribuida: deliveryQuoteUnitLabel(nearest),
         distanciaKm: nearest.distanceKm,
       });
 
-      return {
+      const resolved = {
         location,
         unit: nearest,
         distanceKm: nearest.distanceKm,
-        status: "geocoded" as GeocodingStatus,
+        deliveryRangeId: nearest.deliveryRangeId,
+        locationSource: deliveryLocationSource === "gps" ? "gps" : ("manual_pin" as const),
+        geocodingStatus:
+          deliveryLocationSource === "gps" ? "gps_confirmed" : ("not_needed" as GeocodingStatus),
+        displayAddress: formatManualAddress(manualAddress),
       };
+      setPendingDelivery(resolved);
+      return resolved;
     } catch (error) {
-      setGeocodingStatus("geocoding_failed");
-      console.warn("[Maximus][Nominatim] falha ao geocodificar", error);
-      return null;
+      setDeliveryDistanceKm(null);
+      setDeliveryRangeId(null);
+      setDeliveryUnit(null);
+      console.warn("[Maximus][delivery-function] falha ao calcular entrega", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Confirme o local da entrega pelo GPS ou marque no mapa.",
+      );
+      return {
+        location: null,
+        unit: null,
+        distanceKm: null,
+        deliveryRangeId: null,
+        locationSource: "manual_unavailable" as const,
+        geocodingStatus: "not_needed" as GeocodingStatus,
+      };
     }
   }
 
@@ -708,19 +829,6 @@ function CheckoutPage() {
 
   function resolveManualDeliveryUnit() {
     if (deliveryLocation) return deliveryUnit;
-    const neighborhoodMatches = findNeighborhoodRulesForAddress(
-      address.bairro,
-      deliveryNeighborhoodRules,
-    );
-    const unitByNeighborhood =
-      neighborhoodMatches
-        .map((rule) => units.find((item) => item.id === rule.unitId && item.isOpen))
-        .find((unit): unit is GeoUnit => Boolean(unit)) ??
-      neighborhoodMatches
-        .map((rule) => units.find((item) => item.id === rule.unitId))
-        .find((unit): unit is GeoUnit => Boolean(unit)) ??
-      null;
-    if (unitByNeighborhood) return unitByNeighborhood;
     return (
       (deliveryUnit?.isOpen ? deliveryUnit : null) ??
       units.find((item) => item.slug === selectedUnitSlug && item.isOpen) ??
@@ -756,14 +864,10 @@ function CheckoutPage() {
     unit: resolveManualDeliveryUnit(),
     distanceKm: deliveryDistanceKm,
     rules: deliveryRules,
-    neighborhoodRules: deliveryNeighborhoodRules,
     neighborhood: address.bairro,
     locationSource: deliveryLocationSource,
   });
   const finalTotal = subtotal + (consumeMode === "delivery" ? (deliveryQuote.fee ?? 0) : 0);
-  const isAddressComplete =
-    Boolean(address.rua.trim()) && Boolean(address.numero.trim()) && Boolean(address.bairro.trim());
-
   if (consumeMode === "delivery") {
     console.info("[Maximus][checkout][delivery-fee]", {
       endereco: {
@@ -1046,6 +1150,7 @@ function CheckoutPage() {
                     setAddress(EMPTY_ADDRESS);
                     setDeliveryLocation(null);
                     setDeliveryDistanceKm(null);
+                    setDeliveryRangeId(null);
                   }
                 } catch (error) {
                   toast.error(
@@ -1071,6 +1176,7 @@ function CheckoutPage() {
                 setAddress(EMPTY_ADDRESS);
                 setDeliveryLocation(null);
                 setDeliveryDistanceKm(null);
+                setDeliveryRangeId(null);
                 setSaveAsDefault(currentCustomer.addresses.length === 0);
                 setStep("addressManual");
               }}
@@ -1106,17 +1212,14 @@ function CheckoutPage() {
                     unit: nextUnit,
                     distanceKm: nextDistanceKm,
                     rules: nextRules,
-                    neighborhoodRules: deliveryNeighborhoodRules,
                     neighborhood: address.bairro,
-                    locationSource:
-                      resolved?.status === "geocoded" ? "geocoding" : deliveryLocationSource,
+                    locationSource: resolved?.locationSource ?? deliveryLocationSource,
                   });
                   if (nextQuote.fee == null) {
-                    setGeocodingStatus(resolved ? resolved.status : "bairro_fallback");
+                    setGeocodingStatus(resolved?.geocodingStatus ?? "not_needed");
                     toast.error(nextQuote.blockedReason ?? "Não foi possível calcular a entrega.");
                     return;
                   }
-                  if (!resolved && !deliveryLocation) setGeocodingStatus("bairro_fallback");
                   setStep("payment");
                 }}
               >
@@ -1127,7 +1230,10 @@ function CheckoutPage() {
               className="w-full bg-gradient-primary font-bold"
               size="lg"
               disabled={locating}
-              onClick={useGeolocation}
+              onClick={() => {
+                setDeliveryAddressMode("gps");
+                requestGeolocation();
+              }}
             >
               <MapPin className="mr-2 h-4 w-4" />{" "}
               {locating ? "Solicitando localização..." : "Usar minha localização atual"}
@@ -1136,9 +1242,17 @@ function CheckoutPage() {
               variant="outline"
               className="w-full"
               size="lg"
-              onClick={() => setStep("addressManual")}
+              onClick={() => {
+                setDeliveryAddressMode("other");
+                setPendingDelivery(null);
+                setDeliveryLocation(null);
+                setDeliveryDistanceKm(null);
+                setDeliveryRangeId(null);
+                setDeliveryUnit(null);
+                setStep("addressManual");
+              }}
             >
-              Novo endereço
+              Entregar em outro endereço
             </Button>
           </div>
         </CheckoutShell>
@@ -1155,17 +1269,12 @@ function CheckoutPage() {
                     ? `Pedido direcionado para a unidade mais próxima: ${deliveryUnit.name}.`
                     : "Localização encontrada. Complete o endereço para validar a entrega."}
                 </p>
-                {deliveryUnit && (
-                  <p className="mt-1 text-xs">
-                    Se algum item não estiver disponível nessa unidade, o ajuste do pedido será
-                    validado futuramente.
-                  </p>
-                )}
               </div>
             )}
             {locationDenied && (
               <p className="rounded-xl border border-border bg-card p-3 text-sm text-muted-foreground">
-                Não conseguimos acessar sua localização. Preencha o endereço manualmente.
+                Não conseguimos acessar sua localização. Preencha o endereço como referência e
+                marque o local no mapa.
               </p>
             )}
             {noOpenUnits && (
@@ -1176,18 +1285,20 @@ function CheckoutPage() {
             <section className="rounded-2xl border border-border bg-card p-4">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="font-extrabold">Local real da entrega</h3>
+                  <h3 className="font-extrabold">Endereço de entrega</h3>
                   <p className="text-xs text-muted-foreground">
-                    {gpsAuthorized
-                      ? "O endereço escrito é referência. A rota usa a localização confirmada por GPS."
-                      : "Preencha o endereço para calcular a entrega."}
+                    Confirme o local da entrega pelo GPS ou marque no mapa.
                   </p>
                 </div>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={useGeolocation}
+                  onClick={() => {
+                    setDeliveryAddressMode("gps");
+                    setPendingDelivery(null);
+                    requestGeolocation();
+                  }}
                   disabled={locating}
                 >
                   <MapPin className="mr-2 h-4 w-4" />
@@ -1205,7 +1316,8 @@ function CheckoutPage() {
                 />
               ) : (
                 <p className="rounded-xl border border-border bg-background p-3 text-sm text-muted-foreground">
-                  Preencha o endereço manualmente. A localização atual é opcional.
+                  Confirme o local da entrega pelo GPS ou marque no mapa. O endereço escrito fica
+                  como referência do pedido.
                 </p>
               )}
             </section>
@@ -1234,6 +1346,7 @@ function CheckoutPage() {
                       setAddress(EMPTY_ADDRESS);
                       setDeliveryLocation(null);
                       setDeliveryDistanceKm(null);
+                      setDeliveryRangeId(null);
                     }
                   } catch (error) {
                     toast.error(
@@ -1267,6 +1380,7 @@ function CheckoutPage() {
                   setAddress(EMPTY_ADDRESS);
                   setDeliveryLocation(null);
                   setDeliveryDistanceKm(null);
+                  setDeliveryRangeId(null);
                   setSaveAsDefault(currentCustomer.addresses.length === 0);
                 }}
               />
@@ -1309,6 +1423,13 @@ function CheckoutPage() {
               autoComplete="address-level3"
             />
             <Field
+              label="CEP (opcional)"
+              value={address.cep}
+              onChange={(v) => setAddress({ ...address, cep: v })}
+              inputMode="numeric"
+              autoComplete="postal-code"
+            />
+            <Field
               label="Complemento"
               value={address.complemento}
               onChange={(v) => setAddress({ ...address, complemento: v })}
@@ -1326,70 +1447,169 @@ function CheckoutPage() {
               />
               Definir como endereço principal
             </label>
+            <section className="rounded-2xl border border-border bg-card p-4">
+              <div className="mb-3">
+                <h3 className="font-extrabold">Local no mapa</h3>
+                <p className="text-xs text-muted-foreground">
+                  Toque no mapa para marcar o ponto real da entrega.
+                </p>
+              </div>
+              <LocationPickerMap
+                value={deliveryLocation}
+                fallback={
+                  deliveryLocation ??
+                  (deliveryUnit
+                    ? { latitude: deliveryUnit.latitude, longitude: deliveryUnit.longitude }
+                    : units[0]
+                      ? { latitude: units[0].latitude, longitude: units[0].longitude }
+                      : undefined)
+                }
+                className="h-72 rounded-xl"
+                onChange={(point) => {
+                  setDeliveryAddressMode("other");
+                  setPendingDelivery(null);
+                  applyDeliveryLocation(point, "manual_pin")
+                    .then((nearest) => {
+                      if (nearest) toast.success("Local da entrega marcado.");
+                    })
+                    .catch((error) => {
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : "Não foi possível calcular a entrega.",
+                      );
+                    });
+                }}
+              />
+            </section>
             {isAddressComplete && deliveryQuote.blockedReason ? (
               <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-600">
                 {deliveryQuote.blockedReason}
               </p>
             ) : null}
+            {pendingDelivery?.location && (
+              <section className="rounded-2xl border border-primary/30 bg-primary/10 p-4 text-sm">
+                <h3 className="font-extrabold text-primary">Entrega calculada</h3>
+                <p className="mt-2 font-semibold">
+                  {pendingDelivery.displayAddress ||
+                    formatManualAddress({
+                      street: address.rua,
+                      number: address.numero,
+                      neighborhood: address.bairro,
+                      city: "Santarém",
+                      state: "PA",
+                      postalCode: address.cep,
+                    })}
+                </p>
+                <div className="mt-3 space-y-1 text-xs font-semibold text-muted-foreground">
+                  <p>Bairro: {address.bairro}</p>
+                  <p>Cidade: Santarém - PA</p>
+                  <p>Unidade responsável: {pendingDelivery.unit?.name ?? "A definir"}</p>
+                  <p>
+                    Distância aproximada:{" "}
+                    {pendingDelivery.distanceKm != null
+                      ? `${pendingDelivery.distanceKm.toFixed(1)} km`
+                      : "não calculada"}
+                  </p>
+                  <p>
+                    Taxa de entrega:{" "}
+                    {calculateDeliveryQuote({
+                      subtotal,
+                      unit: pendingDelivery.unit,
+                      distanceKm: pendingDelivery.distanceKm,
+                      rules:
+                        pendingDelivery.unit?.id === deliveryUnit?.id && deliveryRules.length
+                          ? deliveryRules
+                          : [],
+                      neighborhood: address.bairro,
+                      locationSource: pendingDelivery.locationSource,
+                    }).fee == null
+                      ? "não calculada"
+                      : formatPrice(
+                          calculateDeliveryQuote({
+                            subtotal,
+                            unit: pendingDelivery.unit,
+                            distanceKm: pendingDelivery.distanceKm,
+                            rules:
+                              pendingDelivery.unit?.id === deliveryUnit?.id && deliveryRules.length
+                                ? deliveryRules
+                                : [],
+                            neighborhood: address.bairro,
+                            locationSource: pendingDelivery.locationSource,
+                          }).fee ?? 0,
+                        )}
+                  </p>
+                </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <Button
+                    type="button"
+                    className="bg-gradient-primary font-bold"
+                    onClick={async () => {
+                      const customer = await persistCustomer();
+                      if (!customer) return;
+                      const rules = await loadRulesForResolvedUnit(pendingDelivery.unit);
+                      const quote = calculateDeliveryQuote({
+                        subtotal,
+                        unit: pendingDelivery.unit,
+                        distanceKm: pendingDelivery.distanceKm,
+                        rules,
+                        neighborhood: address.bairro,
+                        locationSource: pendingDelivery.locationSource,
+                      });
+                      if (quote.fee == null) {
+                        toast.error(quote.blockedReason ?? "Não foi possível calcular a entrega.");
+                        return;
+                      }
+                      if (!selectedAddressId || editingAddressId) {
+                        await saveCurrentAddress(customer.id, pendingDelivery.location);
+                      }
+                      setStep("payment");
+                    }}
+                  >
+                    Confirmar local
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => setPendingDelivery(null)}>
+                    Corrigir endereço
+                  </Button>
+                </div>
+              </section>
+            )}
             <Button
               className="w-full bg-gradient-primary font-bold"
               size="lg"
               disabled={
                 noOpenUnits ||
                 subtotal < deliveryQuote.minimumOrderValue ||
+                !deliveryLocation ||
                 !address.rua.trim() ||
                 !address.numero.trim() ||
                 !address.bairro.trim()
               }
               onClick={async () => {
-                const customer = await persistCustomer();
-                if (!customer) return;
+                setDeliveryAddressMode("other");
                 const resolved = await resolveManualAddressLocation();
-                const nextLocation = resolved?.location ?? deliveryLocation;
-                const nextUnit = resolved?.unit ?? resolveManualDeliveryUnit();
-                const nextDistanceKm = resolved?.distanceKm ?? deliveryDistanceKm;
+                if (!resolved?.location) {
+                  toast.error("Confirme o local da entrega pelo GPS ou marque no mapa.");
+                  return;
+                }
+                const nextUnit = resolved.unit;
+                const nextDistanceKm = resolved.distanceKm;
                 const nextRules = await loadRulesForResolvedUnit(nextUnit);
                 const nextQuote = calculateDeliveryQuote({
                   subtotal,
                   unit: nextUnit,
                   distanceKm: nextDistanceKm,
                   rules: nextRules,
-                  neighborhoodRules: deliveryNeighborhoodRules,
                   neighborhood: address.bairro,
-                  locationSource:
-                    resolved?.status === "geocoded" ? "geocoding" : deliveryLocationSource,
+                  locationSource: resolved.locationSource,
                 });
                 if (nextQuote.fee == null) {
-                  setGeocodingStatus(resolved ? resolved.status : "bairro_fallback");
                   toast.error(nextQuote.blockedReason ?? "Não foi possível calcular a entrega.");
                   return;
                 }
-                if (!resolved && !deliveryLocation) setGeocodingStatus("bairro_fallback");
-                if (!deliveryUnit) {
-                  const unit = resolveManualDeliveryUnit();
-                  if (!unit?.isOpen) {
-                    setNoOpenUnits(true);
-                    toast.error("No momento não há unidade disponível para delivery.");
-                    return;
-                  }
-                  setDeliveryUnit(unit);
-                }
-                if (!selectedAddressId || editingAddressId) {
-                  try {
-                    await saveCurrentAddress(customer.id, nextLocation);
-                  } catch (error) {
-                    toast.error(
-                      error instanceof Error
-                        ? error.message
-                        : "Não foi possível salvar o endereço.",
-                    );
-                    return;
-                  }
-                }
-                setStep("payment");
               }}
             >
-              Confirmar endereço
+              Calcular entrega
             </Button>
           </div>
         </CheckoutShell>
@@ -1399,7 +1619,7 @@ function CheckoutPage() {
       {step === "payment" && (
         <CheckoutShell
           title="Como você quer pagar?"
-          subtitle={`Total: ${formatPrice(subtotal)}`}
+          subtitle={`Total: ${formatPrice(finalTotal)}`}
           onBack={() => {
             if (consumeMode === "delivery") setStep("addressManual");
             else if (consumeMode === "balcao") setStep("balcao");
@@ -1951,7 +2171,6 @@ function calculateDeliveryQuote({
   unit,
   distanceKm,
   rules,
-  neighborhoodRules,
   neighborhood,
   locationSource,
 }: {
@@ -1959,9 +2178,8 @@ function calculateDeliveryQuote({
   unit: GeoUnit | null;
   distanceKm: number | null;
   rules: DeliveryRuleQuote[];
-  neighborhoodRules: DeliveryNeighborhoodRuleQuote[];
   neighborhood: string;
-  locationSource: "gps" | "pin" | "geocoding" | "manual_unavailable";
+  locationSource: DeliveryLocationSource;
 }): DeliveryQuote {
   const minimumOrderValue = unit?.minimumOrderValue ?? 0;
   const maxDistanceKm = unit?.maxDeliveryDistanceKm ?? 0;
@@ -1970,14 +2188,16 @@ function calculateDeliveryQuote({
     return {
       fee: null,
       distanceKm,
+      deliveryRangeId: null,
+      estimatedMinutes: null,
       minimumOrderValue,
       maxDistanceKm,
       isFree: false,
       method: "blocked",
       blockedReason:
-        locationSource === "gps" || locationSource === "geocoding"
-          ? "No momento não há unidade disponível para delivery."
-          : "Selecione uma unidade para calcular a taxa de entrega.",
+        locationSource === "manual_unavailable"
+          ? "Confirme o local da entrega pelo GPS ou marque no mapa."
+          : "No momento não há unidade disponível para delivery.",
     };
   }
 
@@ -1985,11 +2205,13 @@ function calculateDeliveryQuote({
     return {
       fee: null,
       distanceKm,
+      deliveryRangeId: null,
+      estimatedMinutes: null,
       minimumOrderValue,
       maxDistanceKm,
       isFree: false,
       method: "blocked",
-      blockedReason: "No momento não há unidade disponível para este bairro.",
+      blockedReason: "A unidade mais próxima está fechada no momento.",
     };
   }
 
@@ -1997,20 +2219,57 @@ function calculateDeliveryQuote({
     return {
       fee: null,
       distanceKm,
+      deliveryRangeId: null,
+      estimatedMinutes: null,
       minimumOrderValue,
       maxDistanceKm,
       isFree: false,
       method: "blocked",
-      blockedReason: `Endereço fora da área de entrega (${maxDistanceKm.toFixed(1)} km).`,
+      blockedReason: "Este endereço está fora da área de entrega.",
     };
   }
 
   const freeDeliveryFrom = unit.freeDeliveryFrom ?? 0;
-  const distanceMethod = locationSource === "geocoding" ? "geocoding" : "gps";
+  const distanceMethod = locationSource === "gps" ? "gps" : "manual_pin";
+  const activeRules = [...rules]
+    .filter((rule) => rule.isActive !== false)
+    .sort((a, b) => a.maxDistanceKm - b.maxDistanceKm);
+  const matchedRule =
+    distanceKm == null ? null : activeRules.find((rule) => rule.maxDistanceKm >= distanceKm);
+
+  if (distanceKm != null && activeRules.length > 0) {
+    if (!matchedRule) {
+      return {
+        fee: null,
+        distanceKm,
+        deliveryRangeId: null,
+        estimatedMinutes: null,
+        minimumOrderValue,
+        maxDistanceKm,
+        isFree: false,
+        method: "blocked",
+        blockedReason: "Este endereço está fora da área de entrega.",
+      };
+    }
+
+    return {
+      fee: matchedRule.deliveryFee,
+      distanceKm,
+      deliveryRangeId: matchedRule.id,
+      estimatedMinutes: matchedRule.estimatedMinutes,
+      minimumOrderValue,
+      maxDistanceKm,
+      isFree: matchedRule.deliveryFee === 0,
+      method: distanceMethod,
+    };
+  }
+
   if (distanceKm != null && freeDeliveryFrom > 0 && subtotal >= freeDeliveryFrom) {
     return {
       fee: 0,
       distanceKm,
+      deliveryRangeId: null,
+      estimatedMinutes: null,
       minimumOrderValue,
       maxDistanceKm,
       isFree: true,
@@ -2018,26 +2277,15 @@ function calculateDeliveryQuote({
     };
   }
 
-  const activeRules = [...rules].sort((a, b) => a.maxDistanceKm - b.maxDistanceKm);
   if (distanceKm != null) {
-    const matchedRule = activeRules.find((rule) => rule.maxDistanceKm >= distanceKm);
-    if (matchedRule) {
-      return {
-        fee: matchedRule.deliveryFee,
-        distanceKm,
-        minimumOrderValue,
-        maxDistanceKm,
-        isFree: matchedRule.deliveryFee === 0,
-        method: distanceMethod,
-      };
-    }
-
     const baseFee = unit.baseDeliveryFee ?? 0;
     const perKm = unit.deliveryFeePerKm ?? 0;
     if (baseFee > 0 || perKm > 0) {
       return {
         fee: Number((baseFee + distanceKm * perKm).toFixed(2)),
         distanceKm,
+        deliveryRangeId: null,
+        estimatedMinutes: null,
         minimumOrderValue,
         maxDistanceKm,
         isFree: false,
@@ -2046,60 +2294,19 @@ function calculateDeliveryQuote({
     }
   }
 
-  const neighborhoodRule = findNeighborhoodRuleForAddress(neighborhood, neighborhoodRules, unit.id);
-  if (neighborhoodRule) {
-    return {
-      fee: neighborhoodRule.deliveryFee,
-      distanceKm,
-      minimumOrderValue,
-      maxDistanceKm,
-      isFree: neighborhoodRule.deliveryFee === 0,
-      method: "bairro",
-    };
-  }
-
   return {
     fee: null,
     distanceKm,
+    deliveryRangeId: null,
+    estimatedMinutes: null,
     minimumOrderValue,
     maxDistanceKm,
     isFree: false,
     method: "blocked",
     blockedReason: neighborhood.trim()
-      ? "No momento não há unidade disponível para este bairro."
-      : "Informe o bairro para calcular a taxa de entrega.",
+      ? "Confirme o local da entrega pelo GPS ou marque no mapa."
+      : "Confirme o local da entrega pelo GPS ou marque no mapa.",
   };
-}
-
-function normalizeNeighborhood(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function findNeighborhoodRuleForAddress(
-  neighborhood: string,
-  rules: DeliveryNeighborhoodRuleQuote[],
-  unitId?: string,
-) {
-  return findNeighborhoodRulesForAddress(neighborhood, rules, unitId)[0] ?? null;
-}
-
-function findNeighborhoodRulesForAddress(
-  neighborhood: string,
-  rules: DeliveryNeighborhoodRuleQuote[],
-  unitId?: string,
-) {
-  const normalized = normalizeNeighborhood(neighborhood);
-  if (!normalized) return [];
-  return rules.filter(
-    (rule) =>
-      (!unitId || rule.unitId === unitId) &&
-      normalizeNeighborhood(rule.neighborhood) === normalized,
-  );
 }
 
 function deliveryQuoteUnitLabel(unit: GeoUnit | null) {

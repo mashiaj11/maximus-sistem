@@ -154,19 +154,6 @@ select
 from table_seed
 on conflict (unit_id, table_number) do nothing;
 
-with driver_seed(unit_slug, name, phone, status, active) as (
-  values
-    ('maximus-01', 'Joao', '(93) 98888-0101', 'disponivel', true),
-    ('maximus-01', 'Vitinho', '(93) 98888-0102', 'disponivel', true),
-    ('maximus-02', 'Carlos', '(93) 98888-0201', 'disponivel', true),
-    ('maximus-02', 'Rafael', '(93) 98888-0202', 'disponivel', true)
-)
-insert into public.delivery_drivers (unit_id, name, phone, status, active)
-select units.id, driver_seed.name, driver_seed.phone, driver_seed.status, driver_seed.active
-from driver_seed
-join public.units on units.slug = driver_seed.unit_slug
-on conflict (unit_id, phone) do nothing;
-
 with rule_seed(unit_slug, max_distance_km, estimated_minutes, delivery_fee, active) as (
   values
     ('maximus-01', 3.00, 25, 6.00, true),

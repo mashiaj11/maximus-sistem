@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Copy, Plus, Printer, Trash2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { useState } from "react";
+import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import { TABLE_STATUS_LABELS } from "@/admin/data/tables";
 import type { RestaurantTable, TableStatus } from "@/admin/data/types";
@@ -63,6 +65,9 @@ function printTableQr(table: RestaurantTable, unitName: string) {
 
 function MesasPage() {
   const { tables, selectedUnit, addTable, toggleTable, deleteTable } = useAdmin();
+  const [busyTableId, setBusyTableId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [tableToDelete, setTableToDelete] = useState<RestaurantTable | null>(null);
   const sorted = [...tables].sort((a, b) => a.number - b.number);
   const nextNumber = sorted.length ? Math.max(...sorted.map((table) => table.number)) + 1 : 1;
 
@@ -74,11 +79,24 @@ function MesasPage() {
         action={
           <button
             className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-extrabold text-primary-foreground"
-            onClick={() => addTable()}
+            disabled={creating}
+            onClick={async () => {
+              setCreating(true);
+              try {
+                await addTable();
+                toast.success("Mesa criada com sucesso.");
+              } catch (error) {
+                toast.error(
+                  error instanceof Error ? error.message : "Não foi possível criar mesa.",
+                );
+              } finally {
+                setCreating(false);
+              }
+            }}
             type="button"
           >
             <Plus className="h-4 w-4" />
-            Criar mesa {String(nextNumber).padStart(2, "0")}
+            {creating ? "Criando..." : `Criar mesa ${String(nextNumber).padStart(2, "0")}`}
           </button>
         }
       />
@@ -99,7 +117,20 @@ function MesasPage() {
                 </span>
               </div>
               <button
-                onClick={() => toggleTable(table.id)}
+                disabled={busyTableId === table.id}
+                onClick={async () => {
+                  setBusyTableId(table.id);
+                  try {
+                    await toggleTable(table.id);
+                    toast.success("Mesa atualizada com sucesso.");
+                  } catch (error) {
+                    toast.error(
+                      error instanceof Error ? error.message : "Não foi possível atualizar mesa.",
+                    );
+                  } finally {
+                    setBusyTableId(null);
+                  }
+                }}
                 className={`rounded-md px-3 py-1.5 text-xs font-bold ${
                   table.active
                     ? "bg-emerald-500/15 text-emerald-400"
@@ -145,7 +176,8 @@ function MesasPage() {
                 Imprimir QR
               </button>
               <button
-                onClick={() => deleteTable(table.id)}
+                disabled={busyTableId === table.id}
+                onClick={() => setTableToDelete(table)}
                 className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg bg-destructive px-3 py-2 text-xs font-bold text-destructive-foreground"
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -155,6 +187,50 @@ function MesasPage() {
           </div>
         ))}
       </div>
+
+      {tableToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="admin-root w-full max-w-md rounded-xl border border-border bg-card p-6 font-sora shadow-xl">
+            <h2 className="text-xl font-black">Apagar mesa</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              A Mesa {String(tableToDelete.number).padStart(2, "0")} será apagada se nunca foi usada
+              em pedidos. Se houver histórico, ela será arquivada e não voltará após atualizar a
+              página.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={busyTableId === tableToDelete.id}
+                onClick={() => setTableToDelete(null)}
+                className="rounded-lg bg-secondary px-4 py-2 text-sm font-bold"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={busyTableId === tableToDelete.id}
+                onClick={async () => {
+                  setBusyTableId(tableToDelete.id);
+                  try {
+                    await deleteTable(tableToDelete.id);
+                    toast.success("Mesa apagada com sucesso.");
+                    setTableToDelete(null);
+                  } catch (error) {
+                    toast.error(
+                      error instanceof Error ? error.message : "Não foi possível apagar mesa.",
+                    );
+                  } finally {
+                    setBusyTableId(null);
+                  }
+                }}
+                className="rounded-lg bg-destructive px-4 py-2 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busyTableId === tableToDelete.id ? "Apagando..." : "Apagar mesa"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

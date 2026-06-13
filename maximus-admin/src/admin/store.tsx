@@ -13,12 +13,11 @@ import {
   completeSupabaseDeliveryByDriver,
   deleteSupabaseCategory,
   deleteSupabaseCourier,
-  deleteSupabaseDeliveryNeighborhoodRule,
   deleteSupabaseDeliveryRule,
   deleteSupabaseProduct,
+  deleteSupabaseTable,
   insertSupabaseCategory,
   insertSupabaseCourier,
-  insertSupabaseDeliveryNeighborhoodRule,
   insertSupabaseDeliveryRule,
   insertSupabaseProduct,
   insertSupabaseTable,
@@ -28,7 +27,6 @@ import {
   updateSupabaseCategory,
   updateSupabaseCourier,
   updateSupabaseDriverLocation,
-  updateSupabaseDeliveryNeighborhoodRule,
   updateSupabaseDeliveryRule,
   updateSupabaseOrderKitchenPrintStatus,
   updateSupabaseOrderPayment,
@@ -41,20 +39,17 @@ import {
   loginSupabaseDriver,
   resetSupabaseOperationalData,
   startSupabaseDeliveryNavigation,
-  type OperationalResetScope,
 } from "./supabase-data";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
 import { printKitchenOrder } from "./printing";
 import { sendWhatsAppStatusMessage } from "./whatsapp";
 import type {
-  AdminUser,
   AdminUnit,
   BusinessHour,
   Category,
   Courier,
   CourierStatus,
   DriverPanelSettings,
-  DeliveryNeighborhoodRule,
   DeliveryRule,
   DeliverySettlement,
   DeliverySettlementDriver,
@@ -93,12 +88,10 @@ interface AdminContextValue {
   couriers: Courier[];
   allCouriers: Courier[];
   deliveryRules: DeliveryRule[];
-  deliveryNeighborhoodRules: DeliveryNeighborhoodRule[];
   deliverySettlements: DeliverySettlement[];
-  users: AdminUser[];
   reloadData: () => Promise<void>;
   validateDriverLogin: (username: string, pin: string) => Promise<string | null>;
-  resetOperationalData: (scope: OperationalResetScope) => Promise<void>;
+  resetOperationalData: (confirmation: "ZERAR") => Promise<void>;
   updateUnit: (
     patch: Partial<
       Pick<
@@ -138,13 +131,13 @@ interface AdminContextValue {
   updateCategory: (categoryId: string, patch: Partial<Pick<Category, "name" | "order">>) => void;
   deleteCategory: (categoryId: string) => void;
   toggleCategoryForCurrentUnit: (categoryId: string) => void;
-  addTable: () => void;
+  addTable: () => Promise<void>;
   updateTable: (
     tableId: string,
     patch: Partial<Pick<RestaurantTable, "status" | "active">>,
   ) => void;
-  toggleTable: (tableId: string) => void;
-  deleteTable: (tableId: string) => void;
+  toggleTable: (tableId: string) => Promise<void>;
+  deleteTable: (tableId: string) => Promise<void>;
   addCourier: (
     data: Pick<Courier, "name" | "phone" | "status"> & { username?: string; accessPin?: string },
   ) => Promise<void>;
@@ -166,26 +159,7 @@ interface AdminContextValue {
   removeDeliveryRule: (ruleId: string) => void;
   toggleDeliveryRule: (ruleId: string) => void;
   saveDeliveryRules: () => void;
-  addDeliveryNeighborhoodRule: () => void;
-  updateDeliveryNeighborhoodRule: (
-    ruleId: string,
-    patch: Partial<
-      Pick<
-        DeliveryNeighborhoodRule,
-        "neighborhood" | "estimatedMinutes" | "deliveryFee" | "isActive"
-      >
-    >,
-  ) => void;
-  removeDeliveryNeighborhoodRule: (ruleId: string) => void;
-  toggleDeliveryNeighborhoodRule: (ruleId: string) => void;
-  saveDeliveryNeighborhoodRules: () => void;
   saveDeliverySettlement: (drivers: DeliverySettlementDriver[]) => void;
-  addUser: (data: Pick<AdminUser, "name" | "contact" | "role">) => void;
-  updateUser: (
-    userId: string,
-    patch: Partial<Pick<AdminUser, "name" | "contact" | "role" | "active">>,
-  ) => void;
-  toggleUser: (userId: string) => void;
 }
 
 const AdminContext = createContext<AdminContextValue | null>(null);
@@ -390,11 +364,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
   const [allTables, setTables] = useState<RestaurantTable[]>([]);
   const [allCouriers, setCouriers] = useState<Courier[]>([]);
   const [allDeliveryRules, setDeliveryRules] = useState<DeliveryRule[]>([]);
-  const [allDeliveryNeighborhoodRules, setDeliveryNeighborhoodRules] = useState<
-    DeliveryNeighborhoodRule[]
-  >([]);
   const [allDeliverySettlements, setDeliverySettlements] = useState<DeliverySettlement[]>([]);
-  const [allUsers] = useState<AdminUser[]>([]);
 
   const loadAdminData = useCallback(() => {
     if (!isSupabaseConfigured) {
@@ -417,7 +387,6 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         setTables(data.tables);
         setCouriers(data.couriers);
         setDeliveryRules(data.deliveryRules);
-        setDeliveryNeighborhoodRules(data.deliveryNeighborhoodRules ?? []);
       })
       .catch((error) => {
         console.error("[Maximus][Supabase] Falha ao carregar dados do admin", error);
@@ -429,7 +398,6 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         setTables([]);
         setCouriers([]);
         setDeliveryRules([]);
-        setDeliveryNeighborhoodRules([]);
         setDataError(
           error instanceof Error ? error.message : "Falha ao carregar dados do Supabase.",
         );
@@ -512,16 +480,10 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           .filter((settlement) => settlement.unitId === selectedUnitId)
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       : [];
-    const users = selectedUnitId ? allUsers.filter((user) => user.unitId === selectedUnitId) : [];
     const deliveryRules = selectedUnitId
       ? allDeliveryRules
           .filter((rule) => rule.unitId === selectedUnitId)
           .sort((a, b) => a.maxDistanceKm - b.maxDistanceKm)
-      : [];
-    const deliveryNeighborhoodRules = selectedUnitId
-      ? allDeliveryNeighborhoodRules
-          .filter((rule) => rule.unitId === selectedUnitId)
-          .sort((a, b) => a.neighborhood.localeCompare(b.neighborhood))
       : [];
     const triggerKitchenPrint = (order: Order) => {
       const settings = normalizeKitchenPrintSettings(
@@ -615,8 +577,13 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         }
         return loginSupabaseDriver(username, pin);
       },
-      resetOperationalData: async (scope) => {
-        await resetSupabaseOperationalData(scope);
+      resetOperationalData: async (confirmation) => {
+        if (!selectedUnit) throw new Error("Selecione uma unidade antes de zerar dados.");
+        await resetSupabaseOperationalData({
+          unitSlug: selectedUnit.id,
+          adminPin: selectedUnit.accessPin,
+          confirmation,
+        });
         await loadAdminData();
       },
       selectUnit: async (unitId, pin) => {
@@ -649,9 +616,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       couriers,
       allCouriers,
       deliveryRules,
-      deliveryNeighborhoodRules,
       deliverySettlements,
-      users,
       updateUnit: async (patch) => {
         if (!selectedUnitId) return;
         const nextUnit = allUnits.find((unit) => unit.id === selectedUnitId);
@@ -1085,8 +1050,10 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           try {
             const table = await insertSupabaseTable(selectedUnitId, number);
             setTables((prev) => [...prev, table]);
+            await loadAdminData();
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao criar mesa", error);
+            throw error;
           }
           return;
         }
@@ -1097,41 +1064,51 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         );
       },
       updateTable: async (tableId, patch) => {
-        setTables((prev) =>
-          prev.map((table) => (table.id === tableId ? { ...table, ...patch } : table)),
-        );
         if (isSupabaseConfigured) {
           try {
             await updateSupabaseTable(tableId, patch);
+            await loadAdminData();
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao atualizar mesa", error);
+            throw error;
           }
+          return;
         }
+        setTables((prev) =>
+          prev.map((table) => (table.id === tableId ? { ...table, ...patch } : table)),
+        );
       },
       deleteTable: async (tableId) => {
-        setTables((prev) => prev.filter((table) => table.id !== tableId));
         if (isSupabaseConfigured) {
           try {
-            await updateSupabaseTable(tableId, { active: false });
+            if (!selectedUnitId) throw new Error("Selecione uma unidade antes de apagar mesa.");
+            await deleteSupabaseTable(tableId, selectedUnitId);
+            await loadAdminData();
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao inativar mesa", error);
+            throw error;
           }
+          return;
         }
+        setTables((prev) => prev.filter((table) => table.id !== tableId));
       },
       toggleTable: async (tableId) => {
         const table = allTables.find((item) => item.id === tableId);
         if (!table) return;
         const active = !table.active;
-        setTables((prev) =>
-          prev.map((table) => (table.id === tableId ? { ...table, active } : table)),
-        );
         if (isSupabaseConfigured) {
           try {
             await updateSupabaseTable(tableId, { active });
+            await loadAdminData();
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao alternar mesa", error);
+            throw error;
           }
+          return;
         }
+        setTables((prev) =>
+          prev.map((table) => (table.id === tableId ? { ...table, active } : table)),
+        );
       },
       addCourier: async (data) => {
         if (!selectedUnitId) return;
@@ -1329,84 +1306,6 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           return;
         }
       },
-      addDeliveryNeighborhoodRule: async () => {
-        if (!selectedUnitId) return;
-        const rule = {
-          unitId: selectedUnitId,
-          neighborhood: "",
-          estimatedMinutes: 60,
-          deliveryFee: 0,
-          isActive: true,
-        };
-        if (isSupabaseConfigured) {
-          try {
-            const saved = await insertSupabaseDeliveryNeighborhoodRule(selectedUnitId, rule);
-            setDeliveryNeighborhoodRules((prev) => [...prev, saved]);
-          } catch (error) {
-            console.error("[Maximus][Supabase] Falha ao criar taxa por bairro", error);
-          }
-          return;
-        }
-        setDeliveryNeighborhoodRules((prev) => [
-          ...prev,
-          { id: `${selectedUnitId}-neighborhood-${Date.now()}`, ...rule },
-        ]);
-      },
-      updateDeliveryNeighborhoodRule: async (ruleId, patch) => {
-        setDeliveryNeighborhoodRules((prev) =>
-          prev.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)),
-        );
-        if (isSupabaseConfigured) {
-          try {
-            await updateSupabaseDeliveryNeighborhoodRule(ruleId, patch);
-          } catch (error) {
-            console.error("[Maximus][Supabase] Falha ao atualizar taxa por bairro", error);
-          }
-        }
-      },
-      removeDeliveryNeighborhoodRule: async (ruleId) => {
-        setDeliveryNeighborhoodRules((prev) => prev.filter((rule) => rule.id !== ruleId));
-        if (isSupabaseConfigured) {
-          try {
-            await deleteSupabaseDeliveryNeighborhoodRule(ruleId);
-          } catch (error) {
-            console.error("[Maximus][Supabase] Falha ao remover taxa por bairro", error);
-          }
-        }
-      },
-      toggleDeliveryNeighborhoodRule: async (ruleId) => {
-        const rule = allDeliveryNeighborhoodRules.find((item) => item.id === ruleId);
-        if (!rule) return;
-        const isActive = !rule.isActive;
-        setDeliveryNeighborhoodRules((prev) =>
-          prev.map((item) => (item.id === ruleId ? { ...item, isActive } : item)),
-        );
-        if (isSupabaseConfigured) {
-          try {
-            await updateSupabaseDeliveryNeighborhoodRule(ruleId, { isActive });
-          } catch (error) {
-            console.error("[Maximus][Supabase] Falha ao alternar taxa por bairro", error);
-          }
-        }
-      },
-      saveDeliveryNeighborhoodRules: async () => {
-        if (isSupabaseConfigured) {
-          try {
-            await Promise.all(
-              allDeliveryNeighborhoodRules.map((rule) =>
-                updateSupabaseDeliveryNeighborhoodRule(rule.id, {
-                  neighborhood: rule.neighborhood,
-                  estimatedMinutes: rule.estimatedMinutes,
-                  deliveryFee: rule.deliveryFee,
-                  isActive: rule.isActive,
-                }),
-              ),
-            );
-          } catch (error) {
-            console.error("[Maximus][Supabase] Falha ao salvar taxas por bairro", error);
-          }
-        }
-      },
       saveDeliverySettlement: (drivers) => {
         if (!selectedUnitId) return;
         const cleanDrivers = drivers
@@ -1432,31 +1331,16 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           ...prev,
         ]);
       },
-      addUser: () => {
-        console.warn("[Maximus][Supabase] Cadastro de usuários aguarda tabela/perfis no Supabase.");
-      },
-      updateUser: () => {
-        console.warn(
-          "[Maximus][Supabase] Atualização de usuários aguarda tabela/perfis no Supabase.",
-        );
-      },
-      toggleUser: () => {
-        console.warn(
-          "[Maximus][Supabase] Alternância de usuários aguarda tabela/perfis no Supabase.",
-        );
-      },
     };
   }, [
     allCategories,
     allCouriers,
-    allDeliveryNeighborhoodRules,
     allDeliveryRules,
     allDeliverySettlements,
     allOrders,
     allProducts,
     allTables,
     allUnits,
-    allUsers,
     authError,
     dataError,
     isLoading,

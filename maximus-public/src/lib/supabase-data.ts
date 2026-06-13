@@ -104,6 +104,9 @@ type OrderRow = {
   payment_method: string | null;
   customer_name: string | null;
   customer_phone: string | null;
+  recipient_name: string | null;
+  recipient_phone: string | null;
+  recipient_notes: string | null;
   delivery_lat: number | null;
   delivery_lng: number | null;
   delivery_location_source: OrderInfo["deliveryLocationSource"] | null;
@@ -413,6 +416,11 @@ export function getRememberedLastOrderId() {
   return window.localStorage.getItem(LAST_ORDER_ID_KEY);
 }
 
+export function clearRememberedLastOrderId() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(LAST_ORDER_ID_KEY);
+}
+
 export async function loadPublicUnits() {
   const supabase = getSupabaseClient();
   const rows = (await queryOrThrow(
@@ -566,37 +574,19 @@ export async function loadDeliveryRules(unitId: string) {
       .eq("unit_id", unitId)
       .eq("active", true)
       .order("max_distance_km"),
-  )) as Array<{ max_distance_km: number; delivery_fee: number; estimated_minutes: number }>;
+  )) as Array<{
+    id: string;
+    max_distance_km: number;
+    delivery_fee: number;
+    estimated_minutes: number;
+    active: boolean;
+  }>;
   return rows.map((row) => ({
+    id: row.id,
     maxDistanceKm: Number(row.max_distance_km),
     deliveryFee: Number(row.delivery_fee),
     estimatedMinutes: row.estimated_minutes,
-  }));
-}
-
-export async function loadDeliveryNeighborhoodRules(unitId?: string) {
-  let query = getSupabaseClient()
-    .from("delivery_neighborhood_rules")
-    .select("id, unit_id, neighborhood, estimated_minutes, delivery_fee, active")
-    .eq("active", true)
-    .order("neighborhood");
-
-  if (unitId) query = query.eq("unit_id", unitId);
-
-  const { data, error } = await query;
-  if (error) {
-    if (error.code === "42P01" || error.message.includes("delivery_neighborhood_rules")) {
-      return [];
-    }
-    throw new Error(error.message);
-  }
-
-  return (data ?? []).map((row) => ({
-    id: row.id as string,
-    unitId: row.unit_id as string,
-    neighborhood: String(row.neighborhood ?? ""),
-    deliveryFee: Number(row.delivery_fee),
-    estimatedMinutes: Number(row.estimated_minutes ?? 0),
+    isActive: row.active,
   }));
 }
 
@@ -851,6 +841,7 @@ export async function createOrderInSupabase(params: {
   tableId?: string | null;
   deliveryFee?: number;
   deliveryDistanceKm?: number | null;
+  deliveryRangeId?: string | null;
 }) {
   if (!isSupabaseConfigured) {
     throw new Error("Supabase não configurado. Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.");
@@ -882,8 +873,12 @@ export async function createOrderInSupabase(params: {
         payment_method: paymentMethod,
         customer_name: params.order.customerName ?? null,
         customer_phone: params.order.customerPhone ?? null,
+        recipient_name: params.order.recipientName ?? null,
+        recipient_phone: params.order.recipientPhone ?? null,
+        recipient_notes: params.order.recipientNotes ?? null,
         delivery_fee: deliveryFee,
         delivery_fee_snapshot: deliveryFee,
+        delivery_range_id: params.deliveryRangeId ?? params.order.deliveryRangeId ?? null,
         driver_earned_value: deliveryFee,
         delivery_payout_amount: deliveryFee,
         minimum_order_value: params.order.minimumOrderValue ?? 0,
@@ -957,7 +952,7 @@ export async function getOrderInfo(orderId: string): Promise<OrderInfo | null> {
     getSupabaseClient()
       .from("orders")
       .select(
-        "id, unit_id, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_distance_km, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, total, created_at, units(slug, name), customer_addresses(street, number, neighborhood, complement, reference, latitude, longitude)",
+        "id, unit_id, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, recipient_name, recipient_phone, recipient_notes, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_distance_km, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, total, created_at, units(slug, name), customer_addresses(street, number, neighborhood, complement, reference, latitude, longitude)",
       )
       .eq("id", orderId)
       .limit(1),
@@ -976,6 +971,9 @@ export async function getOrderInfo(orderId: string): Promise<OrderInfo | null> {
     paymentMethod: row.payment_method as OrderInfo["paymentMethod"],
     customerName: row.customer_name ?? undefined,
     customerPhone: row.customer_phone ?? undefined,
+    recipientName: row.recipient_name ?? undefined,
+    recipientPhone: row.recipient_phone ?? undefined,
+    recipientNotes: row.recipient_notes ?? undefined,
     unitId: row.unit_id,
     unitSlug: row.units?.slug,
     unitName: row.units?.name,

@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Plus, Save, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import type { Order } from "@/admin/data/types";
 import { formatBRL, useAdmin } from "@/admin/store";
@@ -14,13 +15,9 @@ function normalizeNumber(value: number) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function normalizeNeighborhood(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+function nonNegativeNumber(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
 }
 
 function uniqueById(orders: Order[]) {
@@ -56,21 +53,34 @@ function EntregaPage() {
     allOrders,
     couriers,
     deliveryRules,
-    deliveryNeighborhoodRules,
     selectedUnit,
+    updateUnit,
     addDeliveryRule,
     updateDeliveryRule,
     removeDeliveryRule,
     toggleDeliveryRule,
     saveDeliveryRules,
-    addDeliveryNeighborhoodRule,
-    updateDeliveryNeighborhoodRule,
-    removeDeliveryNeighborhoodRule,
-    toggleDeliveryNeighborhoodRule,
-    saveDeliveryNeighborhoodRules,
   } = useAdmin();
   const [saved, setSaved] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
   const [expandedDriverId, setExpandedDriverId] = useState<string | null>(null);
+  const [deliverySettings, setDeliverySettings] = useState({
+    minimumOrderValue: selectedUnit?.minimumOrderValue ?? 0,
+    baseDeliveryFee: selectedUnit?.baseDeliveryFee ?? 0,
+    deliveryFeePerKm: selectedUnit?.deliveryFeePerKm ?? 0,
+    maxDeliveryDistanceKm: selectedUnit?.maxDeliveryDistanceKm ?? 0,
+    freeDeliveryFrom: selectedUnit?.freeDeliveryFrom ?? 0,
+  });
+
+  useEffect(() => {
+    setDeliverySettings({
+      minimumOrderValue: selectedUnit?.minimumOrderValue ?? 0,
+      baseDeliveryFee: selectedUnit?.baseDeliveryFee ?? 0,
+      deliveryFeePerKm: selectedUnit?.deliveryFeePerKm ?? 0,
+      maxDeliveryDistanceKm: selectedUnit?.maxDeliveryDistanceKm ?? 0,
+      freeDeliveryFrom: selectedUnit?.freeDeliveryFrom ?? 0,
+    });
+  }, [selectedUnit]);
 
   const duplicateDistances = useMemo(() => {
     const counts = new Map<number, number>();
@@ -95,30 +105,7 @@ function EntregaPage() {
     return [...new Set(result)];
   }, [deliveryRules, duplicateDistances]);
 
-  const duplicateNeighborhoods = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const rule of deliveryNeighborhoodRules) {
-      const key = normalizeNeighborhood(rule.neighborhood);
-      if (!key) continue;
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key));
-  }, [deliveryNeighborhoodRules]);
-
-  const neighborhoodErrors = useMemo(() => {
-    const result: string[] = [];
-    for (const rule of deliveryNeighborhoodRules) {
-      if (!rule.neighborhood.trim()) result.push("Bairro deve ser preenchido.");
-      if (rule.estimatedMinutes <= 0)
-        result.push("Tempo estimado por bairro deve ser maior que zero.");
-      if (rule.deliveryFee < 0) result.push("Taxa por bairro deve ser maior ou igual a zero.");
-    }
-    if (duplicateNeighborhoods.size > 0)
-      result.push("Não é permitido ter bairros duplicados na mesma unidade.");
-    return [...new Set(result)];
-  }, [deliveryNeighborhoodRules, duplicateNeighborhoods]);
-
-  const canSave = errors.length === 0 && neighborhoodErrors.length === 0;
+  const canSave = errors.length === 0;
   const driverSummaries = useMemo(() => {
     return couriers
       .map((courier) => {
@@ -146,9 +133,23 @@ function EntregaPage() {
   function handleSave() {
     if (!canSave) return;
     saveDeliveryRules();
-    saveDeliveryNeighborhoodRules();
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
+  }
+
+  async function handleSaveDeliverySettings() {
+    try {
+      await updateUnit(deliverySettings);
+      setSettingsSaved(true);
+      toast.success("Configurações de entrega salvas.");
+      window.setTimeout(() => setSettingsSaved(false), 1800);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar configurações de entrega.",
+      );
+    }
   }
 
   return (
@@ -166,6 +167,66 @@ function EntregaPage() {
           </button>
         }
       />
+
+      <section className="mb-5 rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-extrabold">Configurações de entrega</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Pedido mínimo e valores padrão salvos por unidade.
+            </p>
+          </div>
+          <button
+            onClick={handleSaveDeliverySettings}
+            className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-extrabold text-primary-foreground"
+          >
+            {settingsSaved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+            {settingsSaved ? "Salvo" : "Salvar configurações"}
+          </button>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <DeliverySettingField
+            label="Pedido mínimo"
+            value={deliverySettings.minimumOrderValue}
+            step="0.01"
+            onChange={(value) =>
+              setDeliverySettings((current) => ({ ...current, minimumOrderValue: value }))
+            }
+          />
+          <DeliverySettingField
+            label="Taxa base"
+            value={deliverySettings.baseDeliveryFee}
+            step="0.01"
+            onChange={(value) =>
+              setDeliverySettings((current) => ({ ...current, baseDeliveryFee: value }))
+            }
+          />
+          <DeliverySettingField
+            label="Taxa por km"
+            value={deliverySettings.deliveryFeePerKm}
+            step="0.01"
+            onChange={(value) =>
+              setDeliverySettings((current) => ({ ...current, deliveryFeePerKm: value }))
+            }
+          />
+          <DeliverySettingField
+            label="Distância máxima km"
+            value={deliverySettings.maxDeliveryDistanceKm}
+            step="0.1"
+            onChange={(value) =>
+              setDeliverySettings((current) => ({ ...current, maxDeliveryDistanceKm: value }))
+            }
+          />
+          <DeliverySettingField
+            label="Frete grátis a partir de"
+            value={deliverySettings.freeDeliveryFrom}
+            step="0.01"
+            onChange={(value) =>
+              setDeliverySettings((current) => ({ ...current, freeDeliveryFrom: value }))
+            }
+          />
+        </div>
+      </section>
 
       <div className="mb-5 rounded-xl border border-border bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -188,13 +249,6 @@ function EntregaPage() {
         {errors.length > 0 && (
           <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
             {errors.map((error) => (
-              <p key={error}>{error}</p>
-            ))}
-          </div>
-        )}
-        {neighborhoodErrors.length > 0 && (
-          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-            {neighborhoodErrors.map((error) => (
               <p key={error}>{error}</p>
             ))}
           </div>
@@ -422,134 +476,32 @@ function EntregaPage() {
           </tbody>
         </table>
       </div>
-
-      <section className="mt-6 rounded-xl border border-border bg-card p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-extrabold">Taxas por bairro</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Usadas quando o cliente informa endereço manual sem GPS.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={addDeliveryNeighborhoodRule}
-            className="inline-flex h-10 items-center gap-2 rounded-lg bg-secondary px-4 text-sm font-extrabold hover:bg-accent"
-          >
-            <Plus className="h-4 w-4" />
-            Novo bairro
-          </button>
-        </div>
-
-        <div className="mt-4 overflow-hidden rounded-xl border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-background text-muted-foreground">
-              <tr className="text-left">
-                <th className="px-4 py-3 font-medium">Bairro</th>
-                <th className="px-4 py-3 font-medium">Tempo estimado</th>
-                <th className="px-4 py-3 font-medium">Taxa</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Resumo</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {deliveryNeighborhoodRules.map((rule) => {
-                const duplicate = duplicateNeighborhoods.has(
-                  normalizeNeighborhood(rule.neighborhood),
-                );
-                return (
-                  <tr key={rule.id} className="border-t border-border bg-background">
-                    <td className="px-4 py-3">
-                      <input
-                        value={rule.neighborhood}
-                        onChange={(event) =>
-                          updateDeliveryNeighborhoodRule(rule.id, {
-                            neighborhood: event.target.value,
-                          })
-                        }
-                        placeholder="Ex: Santíssimo"
-                        className={`h-10 w-48 rounded-lg border bg-background px-3 text-sm ${
-                          duplicate || !rule.neighborhood.trim()
-                            ? "border-red-500/60"
-                            : "border-input"
-                        }`}
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={rule.estimatedMinutes}
-                        onChange={(event) =>
-                          updateDeliveryNeighborhoodRule(rule.id, {
-                            estimatedMinutes: normalizeNumber(Number(event.target.value)),
-                          })
-                        }
-                        className={`h-10 w-28 rounded-lg border bg-background px-3 text-sm ${
-                          rule.estimatedMinutes <= 0 ? "border-red-500/60" : "border-input"
-                        }`}
-                      />
-                      <span className="ml-2 font-semibold">min</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.5"
-                        value={rule.deliveryFee}
-                        onChange={(event) =>
-                          updateDeliveryNeighborhoodRule(rule.id, {
-                            deliveryFee: normalizeNumber(Number(event.target.value)),
-                          })
-                        }
-                        className={`h-10 w-28 rounded-lg border bg-background px-3 text-sm ${
-                          rule.deliveryFee < 0 ? "border-red-500/60" : "border-input"
-                        }`}
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => toggleDeliveryNeighborhoodRule(rule.id)}
-                        className={`rounded-full border px-3 py-1.5 text-xs font-bold ${
-                          rule.isActive
-                            ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
-                            : "border-border bg-secondary text-muted-foreground"
-                        }`}
-                      >
-                        {rule.isActive ? "Ativa" : "Inativa"}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 font-semibold text-muted-foreground">
-                      {rule.neighborhood || "Bairro"} · {rule.estimatedMinutes} min ·{" "}
-                      {formatBRL(rule.deliveryFee)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => removeDeliveryNeighborhoodRule(rule.id)}
-                        className="inline-flex items-center gap-1 rounded-md bg-secondary px-3 py-1.5 text-xs font-bold hover:bg-accent"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Remover
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {deliveryNeighborhoodRules.length === 0 && (
-                <tr className="border-t border-border bg-background">
-                  <td className="px-4 py-5 text-sm text-muted-foreground" colSpan={6}>
-                    Nenhuma taxa por bairro cadastrada para esta unidade.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </div>
+  );
+}
+
+function DeliverySettingField({
+  label,
+  value,
+  step,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  step: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-sm text-muted-foreground">{label}</span>
+      <input
+        type="number"
+        min="0"
+        step={step}
+        value={value}
+        onChange={(event) => onChange(nonNegativeNumber(event.target.value))}
+        className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
+      />
+    </label>
   );
 }
