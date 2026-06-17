@@ -9,6 +9,9 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as RedefinirSenhaRouteImport } from './routes/redefinir-senha'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as EsqueciMinhaSenhaRouteImport } from './routes/esqueci-minha-senha'
 import { Route as EntregadorRouteImport } from './routes/entregador'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
@@ -23,6 +26,21 @@ import { Route as AdminCardapioRouteImport } from './routes/admin.cardapio'
 import { Route as AdminPedidosIndexRouteImport } from './routes/admin.pedidos.index'
 import { Route as AdminPedidosIdRouteImport } from './routes/admin.pedidos.$id'
 
+const RedefinirSenhaRoute = RedefinirSenhaRouteImport.update({
+  id: '/redefinir-senha',
+  path: '/redefinir-senha',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EsqueciMinhaSenhaRoute = EsqueciMinhaSenhaRouteImport.update({
+  id: '/esqueci-minha-senha',
+  path: '/esqueci-minha-senha',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const EntregadorRoute = EntregadorRouteImport.update({
   id: '/entregador',
   path: '/entregador',
@@ -93,6 +111,9 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/entregador': typeof EntregadorRoute
+  '/esqueci-minha-senha': typeof EsqueciMinhaSenhaRoute
+  '/login': typeof LoginRoute
+  '/redefinir-senha': typeof RedefinirSenhaRoute
   '/admin/cardapio': typeof AdminCardapioRoute
   '/admin/configuracoes': typeof AdminConfiguracoesRoute
   '/admin/entrega': typeof AdminEntregaRoute
@@ -107,6 +128,9 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/entregador': typeof EntregadorRoute
+  '/esqueci-minha-senha': typeof EsqueciMinhaSenhaRoute
+  '/login': typeof LoginRoute
+  '/redefinir-senha': typeof RedefinirSenhaRoute
   '/admin/cardapio': typeof AdminCardapioRoute
   '/admin/configuracoes': typeof AdminConfiguracoesRoute
   '/admin/entrega': typeof AdminEntregaRoute
@@ -123,6 +147,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/entregador': typeof EntregadorRoute
+  '/esqueci-minha-senha': typeof EsqueciMinhaSenhaRoute
+  '/login': typeof LoginRoute
+  '/redefinir-senha': typeof RedefinirSenhaRoute
   '/admin/cardapio': typeof AdminCardapioRoute
   '/admin/configuracoes': typeof AdminConfiguracoesRoute
   '/admin/entrega': typeof AdminEntregaRoute
@@ -140,6 +167,9 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/entregador'
+    | '/esqueci-minha-senha'
+    | '/login'
+    | '/redefinir-senha'
     | '/admin/cardapio'
     | '/admin/configuracoes'
     | '/admin/entrega'
@@ -154,6 +184,9 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/entregador'
+    | '/esqueci-minha-senha'
+    | '/login'
+    | '/redefinir-senha'
     | '/admin/cardapio'
     | '/admin/configuracoes'
     | '/admin/entrega'
@@ -169,6 +202,9 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/entregador'
+    | '/esqueci-minha-senha'
+    | '/login'
+    | '/redefinir-senha'
     | '/admin/cardapio'
     | '/admin/configuracoes'
     | '/admin/entrega'
@@ -185,11 +221,35 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
   EntregadorRoute: typeof EntregadorRoute
+  EsqueciMinhaSenhaRoute: typeof EsqueciMinhaSenhaRoute
+  LoginRoute: typeof LoginRoute
+  RedefinirSenhaRoute: typeof RedefinirSenhaRoute
   EntregaDriverIdRoute: typeof EntregaDriverIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/redefinir-senha': {
+      id: '/redefinir-senha'
+      path: '/redefinir-senha'
+      fullPath: '/redefinir-senha'
+      preLoaderRoute: typeof RedefinirSenhaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/esqueci-minha-senha': {
+      id: '/esqueci-minha-senha'
+      path: '/esqueci-minha-senha'
+      fullPath: '/esqueci-minha-senha'
+      preLoaderRoute: typeof EsqueciMinhaSenhaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/entregador': {
       id: '/entregador'
       path: '/entregador'
@@ -314,6 +374,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
   EntregadorRoute: EntregadorRoute,
+  EsqueciMinhaSenhaRoute: EsqueciMinhaSenhaRoute,
+  LoginRoute: LoginRoute,
+  RedefinirSenhaRoute: RedefinirSenhaRoute,
   EntregaDriverIdRoute: EntregaDriverIdRoute,
 }
 export const routeTree = rootRouteImport

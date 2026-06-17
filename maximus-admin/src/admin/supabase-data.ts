@@ -17,8 +17,11 @@ import type {
   RestaurantTable,
   TableStatus,
   UnitId,
+  WhatsappMessageSettings,
+  WhatsappSendMode,
+  WhatsappStatusSettings,
+  WhatsappStatusMessages,
 } from "./data/types";
-import { UNITS } from "./data/units";
 
 type UnitRow = {
   id: string;
@@ -32,6 +35,7 @@ type UnitRow = {
   business_hours: unknown;
   theme: AdminUnit["theme"];
   kitchen_print_settings: unknown;
+  active?: boolean | null;
 };
 
 type CategoryRow = {
@@ -52,6 +56,11 @@ type ProductRow = {
   image_url: string | null;
   option_groups: Product["optionGroups"] | null;
   available: boolean;
+  available_for_delivery?: boolean | null;
+  available_for_pickup?: boolean | null;
+  available_for_dine_in?: boolean | null;
+  dine_in_only?: boolean | null;
+  deleted_at?: string | null;
 };
 
 type StoreTableRow = {
@@ -94,9 +103,12 @@ type AdminSettingsRow = {
   settings: unknown;
   require_driver_completion: boolean;
   whatsapp_enabled: boolean;
+  whatsapp_bot_enabled: boolean | null;
   whatsapp_number: string | null;
+  whatsapp_welcome_message: string | null;
+  whatsapp_human_message: string | null;
   whatsapp_messages: unknown;
-  official_phone: string | null;
+  whatsapp_status_settings: unknown;
   delivery_panel_enabled: boolean;
   kitchen_print_enabled: boolean;
   kitchen_print_settings: unknown;
@@ -107,6 +119,12 @@ type AdminSettingsRow = {
   free_delivery_from: number | null;
   admin_pin: string | null;
 };
+
+const UNIT_SELECT =
+  "id, slug, name, phone, address, latitude, longitude, is_open, business_hours, theme, kitchen_print_settings";
+
+const ADMIN_SETTINGS_SELECT =
+  "unit_id, settings, require_driver_completion, whatsapp_enabled, whatsapp_bot_enabled, whatsapp_number, whatsapp_welcome_message, whatsapp_human_message, whatsapp_messages, whatsapp_status_settings, delivery_panel_enabled, kitchen_print_enabled, kitchen_print_settings, minimum_order_value, base_delivery_fee, delivery_fee_per_km, max_delivery_distance_km, free_delivery_from, admin_pin";
 
 type OrderRow = {
   id: string;
@@ -230,6 +248,12 @@ function assertConfigured() {
   }
 }
 
+function compactUpdate<T extends Record<string, unknown>>(value: T) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  ) as Partial<T>;
+}
+
 function buildUnitLookups(units: UnitRow[]) {
   const idBySlug = new Map<UnitId, string>();
   const slugById = new Map<string, UnitId>();
@@ -242,8 +266,31 @@ function buildUnitLookups(units: UnitRow[]) {
   return { idBySlug, slugById };
 }
 
-function fallbackUnit(unitId: UnitId) {
-  return UNITS.find((unit) => unit.id === unitId) ?? UNITS[0];
+function emptyUnit(unitId: UnitId): AdminUnit {
+  return {
+    id: unitId,
+    name: unitId,
+    phone: "",
+    address: "",
+    latitude: 0,
+    longitude: 0,
+    isOpen: false,
+    active: true,
+    businessHours: [],
+    theme: "light",
+    accessPin: "",
+    kitchenPrintSettings: FALLBACK_KITCHEN_PRINT_SETTINGS,
+    whatsappSettings: {
+      enabled: false,
+      botEnabled: false,
+      officialNumber: "",
+      welcomeMessage: "",
+      humanMessage: "",
+      ...DEFAULT_WHATSAPP_MESSAGES,
+      statusSettings: normalizeWhatsappStatusSettings(undefined, DEFAULT_WHATSAPP_MESSAGES),
+    },
+    driverPanelSettings: { enabled: false },
+  };
 }
 
 const WEEKDAY_KEYS: AdminUnit["businessHours"][number]["day"][] = [
@@ -264,6 +311,85 @@ const FALLBACK_KITCHEN_PRINT_SETTINGS: KitchenPrintSettings = {
   printerType: "escpos",
   copies: 1,
 };
+
+const DEFAULT_WHATSAPP_MESSAGES: WhatsappStatusMessages = {
+  received: "",
+  accepted: "",
+  in_preparation: "",
+  ready: "",
+  ready_for_pickup: "",
+  out_for_delivery: "",
+  driver_on_way: "",
+  driver_nearby: "",
+  arrived: "",
+  delivered: "",
+  picked_up: "",
+  delivered_to_table: "",
+  cancelled: "",
+};
+
+const DEFAULT_WHATSAPP_WELCOME_MESSAGE = "";
+const DEFAULT_WHATSAPP_HUMAN_MESSAGE = "";
+const WHATSAPP_SEND_MODES: WhatsappSendMode[] = ["text", "pdf", "text_and_pdf"];
+
+type LegacyWhatsappMessages = {
+  receivedMessage?: string;
+  acceptedMessage?: string;
+  productionMessage?: string;
+  readyMessage?: string;
+  outForDeliveryMessage?: string;
+  driverOnWayMessage?: string;
+  driverNearbyMessage?: string;
+  deliveredMessage?: string;
+};
+
+function normalizeWhatsappMessages(
+  value?: Partial<WhatsappMessageSettings> & LegacyWhatsappMessages,
+): WhatsappStatusMessages {
+  return {
+    received: value?.received ?? value?.receivedMessage ?? DEFAULT_WHATSAPP_MESSAGES.received,
+    accepted: value?.accepted ?? value?.acceptedMessage ?? DEFAULT_WHATSAPP_MESSAGES.accepted,
+    in_preparation:
+      value?.in_preparation ?? value?.productionMessage ?? DEFAULT_WHATSAPP_MESSAGES.in_preparation,
+    ready: value?.ready ?? value?.readyMessage ?? DEFAULT_WHATSAPP_MESSAGES.ready,
+    ready_for_pickup:
+      value?.ready_for_pickup ?? value?.readyMessage ?? DEFAULT_WHATSAPP_MESSAGES.ready_for_pickup,
+    out_for_delivery:
+      value?.out_for_delivery ??
+      value?.outForDeliveryMessage ??
+      DEFAULT_WHATSAPP_MESSAGES.out_for_delivery,
+    driver_on_way:
+      value?.driver_on_way ?? value?.driverOnWayMessage ?? DEFAULT_WHATSAPP_MESSAGES.driver_on_way,
+    driver_nearby:
+      value?.driver_nearby ?? value?.driverNearbyMessage ?? DEFAULT_WHATSAPP_MESSAGES.driver_nearby,
+    arrived: value?.arrived ?? DEFAULT_WHATSAPP_MESSAGES.arrived,
+    delivered: value?.delivered ?? value?.deliveredMessage ?? DEFAULT_WHATSAPP_MESSAGES.delivered,
+    picked_up: value?.picked_up ?? value?.deliveredMessage ?? DEFAULT_WHATSAPP_MESSAGES.picked_up,
+    delivered_to_table:
+      value?.delivered_to_table ??
+      value?.deliveredMessage ??
+      DEFAULT_WHATSAPP_MESSAGES.delivered_to_table,
+    cancelled: value?.cancelled ?? DEFAULT_WHATSAPP_MESSAGES.cancelled,
+  };
+}
+
+function normalizeWhatsappStatusSettings(value: unknown, messages: WhatsappStatusMessages) {
+  const rows = value && typeof value === "object" ? (value as Partial<WhatsappStatusSettings>) : {};
+  return Object.fromEntries(
+    Object.entries(messages).map(([status, message]) => {
+      const saved = rows[status as keyof WhatsappStatusMessages];
+      const mode = saved?.mode && WHATSAPP_SEND_MODES.includes(saved.mode) ? saved.mode : "text";
+      return [
+        status,
+        {
+          enabled: saved?.enabled ?? true,
+          mode,
+          message: saved?.message ?? message,
+        },
+      ];
+    }),
+  ) as WhatsappStatusSettings;
+}
 
 function normalizeBusinessHours(value: unknown, fallback: AdminUnit["businessHours"]) {
   const rows =
@@ -291,17 +417,25 @@ function normalizeBusinessHours(value: unknown, fallback: AdminUnit["businessHou
 }
 
 function mapUnit(row: UnitRow, settings?: AdminSettingsRow): AdminUnit {
-  const fallback = fallbackUnit(row.slug);
-  const fallbackKitchenPrintSettings =
-    fallback.kitchenPrintSettings ?? FALLBACK_KITCHEN_PRINT_SETTINGS;
-  const unitPatch =
+  const empty = emptyUnit(row.slug);
+  const settingsObject =
     settings?.settings && typeof settings.settings === "object"
-      ? ((settings.settings as { unit_patch?: Partial<AdminUnit> }).unit_patch ?? {})
+      ? (settings.settings as {
+          public_app_url?: string;
+          accepts_delivery?: boolean;
+          accepts_pickup?: boolean;
+          accepts_dine_in?: boolean;
+        })
       : {};
   const whatsappMessages =
     settings?.whatsapp_messages && typeof settings.whatsapp_messages === "object"
       ? (settings.whatsapp_messages as Partial<AdminUnit["whatsappSettings"]>)
       : {};
+  const normalizedWhatsappMessages = normalizeWhatsappMessages(whatsappMessages);
+  const whatsappStatusSettings = normalizeWhatsappStatusSettings(
+    settings?.whatsapp_status_settings,
+    normalizedWhatsappMessages,
+  );
   const kitchenPrintSettings =
     settings?.kitchen_print_settings && typeof settings.kitchen_print_settings === "object"
       ? (settings.kitchen_print_settings as Partial<KitchenPrintSettings>)
@@ -309,19 +443,26 @@ function mapUnit(row: UnitRow, settings?: AdminSettingsRow): AdminUnit {
 
   return {
     id: row.slug,
-    name: unitPatch.name ?? row.name,
-    phone: unitPatch.phone ?? settings?.official_phone ?? row.phone ?? fallback.phone,
-    address: unitPatch.address ?? row.address ?? fallback.address,
-    latitude: Number(unitPatch.latitude ?? row.latitude ?? fallback.latitude),
-    longitude: Number(unitPatch.longitude ?? row.longitude ?? fallback.longitude),
-    isOpen: unitPatch.isOpen ?? row.is_open,
-    businessHours: normalizeBusinessHours(unitPatch.businessHours ?? row.business_hours, []),
-    theme: unitPatch.theme ?? row.theme ?? fallback.theme,
-    accessPin: settings?.admin_pin ?? unitPatch.accessPin ?? fallback.accessPin,
+    name: row.name ?? empty.name,
+    phone: row.phone ?? "",
+    address: row.address ?? "",
+    latitude: Number(row.latitude ?? 0),
+    longitude: Number(row.longitude ?? 0),
+    isOpen: Boolean(row.is_open),
+    active: true,
+    businessHours: Array.isArray(row.business_hours)
+      ? normalizeBusinessHours(row.business_hours, [])
+      : [],
+    theme: row.theme ?? "light",
+    accessPin: settings?.admin_pin ?? "",
+    publicAppUrl: settingsObject.public_app_url ?? "",
+    acceptsDelivery: settingsObject.accepts_delivery ?? true,
+    acceptsPickup: settingsObject.accepts_pickup ?? true,
+    acceptsDineIn: settingsObject.accepts_dine_in ?? true,
     kitchenPrintSettings:
       row.kitchen_print_settings && typeof row.kitchen_print_settings === "object"
         ? {
-            ...fallbackKitchenPrintSettings,
+            ...FALLBACK_KITCHEN_PRINT_SETTINGS,
             ...(row.kitchen_print_settings as Partial<KitchenPrintSettings>),
             ...kitchenPrintSettings,
             autoPrintEnabled:
@@ -329,33 +470,22 @@ function mapUnit(row: UnitRow, settings?: AdminSettingsRow): AdminUnit {
               (row.kitchen_print_settings as Partial<KitchenPrintSettings>).autoPrintEnabled,
           }
         : {
-            ...fallbackKitchenPrintSettings,
+            ...FALLBACK_KITCHEN_PRINT_SETTINGS,
             ...kitchenPrintSettings,
             autoPrintEnabled:
-              settings?.kitchen_print_enabled ?? fallbackKitchenPrintSettings.autoPrintEnabled,
+              settings?.kitchen_print_enabled ?? FALLBACK_KITCHEN_PRINT_SETTINGS.autoPrintEnabled,
           },
     whatsappSettings: {
-      ...fallback.whatsappSettings,
-      ...whatsappMessages,
-      enabled: settings?.whatsapp_enabled ?? fallback.whatsappSettings?.enabled ?? false,
-      provider: whatsappMessages.provider ?? "none",
-      apiUrl: whatsappMessages.apiUrl ?? "",
-      apiKey: whatsappMessages.apiKey ?? "",
-      instanceId: whatsappMessages.instanceId ?? "",
-      officialNumber:
-        settings?.whatsapp_number ??
-        settings?.official_phone ??
-        fallback.whatsappSettings?.officialNumber ??
-        row.phone ??
-        fallback.phone,
+      ...normalizedWhatsappMessages,
+      enabled: settings?.whatsapp_enabled ?? false,
+      botEnabled: settings?.whatsapp_bot_enabled ?? false,
+      welcomeMessage: settings?.whatsapp_welcome_message ?? "",
+      humanMessage: settings?.whatsapp_human_message ?? "",
+      officialNumber: settings?.whatsapp_number ?? "",
+      statusSettings: whatsappStatusSettings,
     } as AdminUnit["whatsappSettings"],
     driverPanelSettings: {
-      ...fallback.driverPanelSettings,
-      enabled:
-        settings?.require_driver_completion ??
-        settings?.delivery_panel_enabled ??
-        fallback.driverPanelSettings?.enabled ??
-        false,
+      enabled: settings?.require_driver_completion ?? settings?.delivery_panel_enabled ?? false,
     },
     minimumOrderValue: Number(settings?.minimum_order_value ?? 0),
     baseDeliveryFee: Number(settings?.base_delivery_fee ?? 0),
@@ -365,15 +495,12 @@ function mapUnit(row: UnitRow, settings?: AdminSettingsRow): AdminUnit {
   };
 }
 
-function mapCategory(row: CategoryRow): Category {
+function mapCategory(row: CategoryRow, unitSlugs: UnitId[]): Category {
   return {
     id: row.id,
     name: row.name,
     order: row.sort_order,
-    activeByUnit: {
-      "maximus-01": row.active,
-      "maximus-02": row.active,
-    },
+    activeByUnit: Object.fromEntries(unitSlugs.map((slug) => [slug, row.active])),
     availabilityScope: row.availability_scope,
   };
 }
@@ -391,6 +518,10 @@ function mapProduct(row: ProductRow, slugById: Map<string, UnitId>): Product {
     description: row.description ?? undefined,
     imageUrl: row.image_url ?? undefined,
     optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
+    availableForDelivery: row.available_for_delivery !== false,
+    availableForPickup: row.available_for_pickup !== false,
+    availableForDineIn: row.available_for_dine_in !== false,
+    dineInOnly: row.dine_in_only === true,
   };
 }
 
@@ -550,13 +681,7 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
   const supabase = getSupabaseClient();
 
   const units = (await selectOrThrow(
-    supabase
-      .from("units")
-      .select(
-        "id, slug, name, phone, address, latitude, longitude, is_open, business_hours, theme, kitchen_print_settings",
-      )
-      .eq("active", true)
-      .order("slug"),
+    supabase.from("units").select(UNIT_SELECT).order("slug"),
   )) as UnitRow[];
   const { idBySlug, slugById } = buildUnitLookups(units);
 
@@ -565,14 +690,17 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
       supabase
         .from("categories")
         .select("id, name, sort_order, availability_scope, active")
+        .eq("active", true)
+        .is("deleted_at", null)
         .order("sort_order", { ascending: true }),
     ) as Promise<CategoryRow[] | null>,
     selectOrThrow(
       supabase
         .from("products")
         .select(
-          "id, unit_id, category_id, name, description, price, image_url, option_groups, available",
+          "id, unit_id, category_id, name, description, price, image_url, option_groups, available, available_for_delivery, available_for_pickup, available_for_dine_in, dine_in_only, deleted_at",
         )
+        .is("deleted_at", null)
         .order("name", { ascending: true }),
     ) as Promise<ProductRow[] | null>,
     selectOrThrow(
@@ -601,13 +729,9 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
         .select("id, unit_id, max_distance_km, estimated_minutes, delivery_fee, active")
         .order("max_distance_km", { ascending: true }),
     ) as Promise<DeliveryRuleRow[] | null>,
-    selectOrThrow(
-      supabase
-        .from("admin_settings")
-        .select(
-          "unit_id, settings, require_driver_completion, whatsapp_enabled, whatsapp_number, whatsapp_messages, official_phone, delivery_panel_enabled, kitchen_print_enabled, kitchen_print_settings, minimum_order_value, base_delivery_fee, delivery_fee_per_km, max_delivery_distance_km, free_delivery_from, admin_pin",
-        ),
-    ) as Promise<AdminSettingsRow[] | null>,
+    selectOrThrow(supabase.from("admin_settings").select(ADMIN_SETTINGS_SELECT)) as Promise<
+      AdminSettingsRow[] | null
+    >,
   ]);
   const adminSettingsByUnitId = new Map((adminSettings ?? []).map((row) => [row.unit_id, row]));
   const orderRows = (await selectOrThrow(
@@ -669,7 +793,12 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
         ),
       )
       .filter((order): order is Order => Boolean(order)),
-    categories: (categories ?? []).map(mapCategory),
+    categories: (categories ?? []).map((category) =>
+      mapCategory(
+        category,
+        units.map((unit) => unit.slug),
+      ),
+    ),
     products: (products ?? []).map((product) => mapProduct(product, slugById)),
     tables: (tables ?? [])
       .map((table) => mapTable(table, slugById))
@@ -739,12 +868,19 @@ export async function assignSupabaseDeliveryDriver(
   await updateSupabaseCourier(courier.id, { status: "em_entrega", active: true });
 }
 
-export async function updateSupabaseOrderPayment(order: Order, paymentStatus: PaymentStatus) {
+export async function updateSupabaseOrderPayment(
+  order: Order,
+  paymentStatus: PaymentStatus,
+  nextStatus?: OrderStatus,
+) {
   assertConfigured();
   const supabase = getSupabaseClient();
   const { error } = await supabase
     .from("orders")
-    .update({ payment_status: paymentStatus })
+    .update({
+      payment_status: paymentStatus,
+      ...(nextStatus ? { status: nextStatus } : {}),
+    })
     .eq("id", order.id);
   if (error) throw new Error(error.message);
 
@@ -774,6 +910,23 @@ export async function updateSupabaseDriverLocation(
       delivery_status: status,
     })
     .eq("id", orderId);
+  if (error) throw new Error(error.message);
+}
+
+export async function markSupabaseDeliveryArrived(order: Order) {
+  assertConfigured();
+  const { error } = await getSupabaseClient()
+    .from("orders")
+    .update({
+      status: "arrived",
+      delivery_status: "arrived",
+      delivery_driver_id: order.deliveryDriverId ?? order.courierId ?? order.driver_id ?? null,
+      delivery_driver_name:
+        order.deliveryDriverName ?? order.courierName ?? order.driver_name ?? null,
+      driver_id: order.driver_id ?? order.deliveryDriverId ?? order.courierId ?? null,
+      driver_name: order.driver_name ?? order.deliveryDriverName ?? order.courierName ?? null,
+    })
+    .eq("id", order.id);
   if (error) throw new Error(error.message);
 }
 
@@ -839,21 +992,25 @@ export async function completeSupabaseDeliveryByDriver(
 
 export async function updateSupabaseUnit(unitId: UnitId, patch: Partial<AdminUnit>) {
   assertConfigured();
-  const { error } = await getSupabaseClient()
+  const payload = compactUpdate({
+    name: patch.name,
+    phone: patch.phone,
+    address: patch.address,
+    latitude: patch.latitude,
+    longitude: patch.longitude,
+    is_open: patch.isOpen,
+    business_hours: patch.businessHours,
+    theme: patch.theme,
+    kitchen_print_settings: patch.kitchenPrintSettings,
+  });
+  const { data, error } = await getSupabaseClient()
     .from("units")
-    .update({
-      name: patch.name,
-      phone: patch.phone,
-      address: patch.address,
-      latitude: patch.latitude,
-      longitude: patch.longitude,
-      is_open: patch.isOpen,
-      business_hours: patch.businessHours,
-      theme: patch.theme,
-      kitchen_print_settings: patch.kitchenPrintSettings,
-    })
-    .eq("slug", unitId);
+    .update(payload)
+    .eq("slug", unitId)
+    .select(UNIT_SELECT)
+    .single();
   if (error) throw new Error(error.message);
+  if (!data) throw new Error("Nenhuma unidade foi atualizada no Supabase.");
 }
 
 export async function upsertSupabaseAdminSettings(unit: AdminUnit) {
@@ -863,45 +1020,55 @@ export async function upsertSupabaseAdminSettings(unit: AdminUnit) {
     supabase.from("units").select("id").eq("slug", unit.id).single(),
   )) as Pick<UnitRow, "id">;
   const whatsappSettings = unit.whatsappSettings;
+  const whatsappMessages = normalizeWhatsappMessages(whatsappSettings);
+  const whatsappStatusSettings = normalizeWhatsappStatusSettings(
+    whatsappSettings?.statusSettings,
+    whatsappMessages,
+  );
+  const normalizedWhatsappSettings: WhatsappMessageSettings = {
+    enabled: Boolean(whatsappSettings?.enabled),
+    botEnabled: Boolean(whatsappSettings?.botEnabled),
+    officialNumber: whatsappSettings?.officialNumber?.trim() ?? "",
+    welcomeMessage: whatsappSettings?.welcomeMessage ?? DEFAULT_WHATSAPP_WELCOME_MESSAGE,
+    humanMessage: whatsappSettings?.humanMessage ?? DEFAULT_WHATSAPP_HUMAN_MESSAGE,
+    ...whatsappMessages,
+    statusSettings: whatsappStatusSettings,
+  };
   const kitchenPrintSettings = unit.kitchenPrintSettings;
   const driverPanelSettings = unit.driverPanelSettings;
-  const { error } = await supabase.from("admin_settings").upsert(
-    {
-      unit_id: unitRow.id,
-      settings: {
-        unit_patch: {
-          name: unit.name,
-          phone: unit.phone,
-          address: unit.address,
-          latitude: unit.latitude,
-          longitude: unit.longitude,
-          isOpen: unit.isOpen,
-          businessHours: unit.businessHours,
-          theme: unit.theme,
-          accessPin: unit.accessPin,
-          kitchenPrintSettings,
-          whatsappSettings,
-          driverPanelSettings,
-        },
-      },
-      require_driver_completion: Boolean(driverPanelSettings?.enabled),
-      whatsapp_enabled: Boolean(whatsappSettings?.enabled),
-      whatsapp_number: whatsappSettings?.officialNumber ?? unit.phone,
-      whatsapp_messages: whatsappSettings ?? {},
-      official_phone: unit.phone,
-      delivery_panel_enabled: Boolean(driverPanelSettings?.enabled),
-      kitchen_print_enabled: Boolean(kitchenPrintSettings?.autoPrintEnabled),
-      kitchen_print_settings: kitchenPrintSettings ?? {},
-      minimum_order_value: unit.minimumOrderValue ?? 0,
-      base_delivery_fee: unit.baseDeliveryFee ?? 0,
-      delivery_fee_per_km: unit.deliveryFeePerKm ?? 0,
-      max_delivery_distance_km: unit.maxDeliveryDistanceKm ?? 0,
-      free_delivery_from: unit.freeDeliveryFrom ?? 0,
-      admin_pin: unit.accessPin,
+  const settingsPayload = {
+    unit_id: unitRow.id,
+    settings: {
+      public_app_url: unit.publicAppUrl?.trim() ?? "",
+      accepts_delivery: unit.acceptsDelivery ?? true,
+      accepts_pickup: unit.acceptsPickup ?? true,
+      accepts_dine_in: unit.acceptsDineIn ?? true,
     },
-    { onConflict: "unit_id" },
-  );
+    require_driver_completion: Boolean(driverPanelSettings?.enabled),
+    whatsapp_enabled: Boolean(whatsappSettings?.enabled),
+    whatsapp_bot_enabled: Boolean(whatsappSettings?.botEnabled),
+    whatsapp_number: whatsappSettings?.officialNumber?.trim() ?? "",
+    whatsapp_welcome_message: whatsappSettings?.welcomeMessage ?? DEFAULT_WHATSAPP_WELCOME_MESSAGE,
+    whatsapp_human_message: whatsappSettings?.humanMessage ?? DEFAULT_WHATSAPP_HUMAN_MESSAGE,
+    whatsapp_messages: whatsappMessages,
+    whatsapp_status_settings: whatsappStatusSettings,
+    delivery_panel_enabled: Boolean(driverPanelSettings?.enabled),
+    kitchen_print_enabled: Boolean(kitchenPrintSettings?.autoPrintEnabled),
+    kitchen_print_settings: kitchenPrintSettings ?? {},
+    minimum_order_value: unit.minimumOrderValue ?? 0,
+    base_delivery_fee: unit.baseDeliveryFee ?? 0,
+    delivery_fee_per_km: unit.deliveryFeePerKm ?? 0,
+    max_delivery_distance_km: unit.maxDeliveryDistanceKm ?? 0,
+    free_delivery_from: unit.freeDeliveryFrom ?? 0,
+    admin_pin: unit.accessPin,
+  };
+  const { data, error } = await supabase
+    .from("admin_settings")
+    .upsert(settingsPayload, { onConflict: "unit_id" })
+    .select(ADMIN_SETTINGS_SELECT)
+    .single();
   if (error) throw new Error(error.message);
+  if (!data) throw new Error("As configurações da unidade não foram confirmadas no Supabase.");
 }
 
 export async function insertSupabaseCategory(name: string, order: number): Promise<Category> {
@@ -934,7 +1101,15 @@ export async function updateSupabaseCategory(
 
 export async function deleteSupabaseCategory(categoryId: string) {
   assertConfigured();
-  const { error } = await getSupabaseClient().from("categories").delete().eq("id", categoryId);
+  const now = new Date().toISOString();
+  const { error } = await getSupabaseClient()
+    .from("categories")
+    .update({
+      active: false,
+      deleted_at: now,
+      updated_at: now,
+    })
+    .eq("id", categoryId);
   if (error) throw new Error(error.message);
 }
 
@@ -966,9 +1141,13 @@ export async function insertSupabaseProduct(unitId: UnitId, data: ProductDraft):
       image_url: data.imageUrl ?? null,
       option_groups: data.optionGroups ?? [],
       available: data.active,
+      available_for_delivery: data.availableForDelivery ?? true,
+      available_for_pickup: data.availableForPickup ?? true,
+      available_for_dine_in: data.availableForDineIn ?? true,
+      dine_in_only: data.dineInOnly ?? false,
     })
     .select(
-      "id, unit_id, category_id, name, description, price, image_url, option_groups, available",
+      "id, unit_id, category_id, name, description, price, image_url, option_groups, available, available_for_delivery, available_for_pickup, available_for_dine_in, dine_in_only",
     )
     .single();
   if (error) throw new Error(error.message);
@@ -987,6 +1166,10 @@ export async function updateSupabaseProduct(productId: string, patch: Partial<Pr
       image_url: patch.imageUrl,
       option_groups: patch.optionGroups,
       available: patch.active,
+      available_for_delivery: patch.availableForDelivery,
+      available_for_pickup: patch.availableForPickup,
+      available_for_dine_in: patch.availableForDineIn,
+      dine_in_only: patch.dineInOnly,
     })
     .eq("id", productId);
   if (error) throw new Error(error.message);
@@ -994,7 +1177,13 @@ export async function updateSupabaseProduct(productId: string, patch: Partial<Pr
 
 export async function deleteSupabaseProduct(productId: string) {
   assertConfigured();
-  const { error } = await getSupabaseClient().from("products").delete().eq("id", productId);
+  const { error } = await getSupabaseClient()
+    .from("products")
+    .update({
+      available: false,
+      deleted_at: new Date().toISOString(),
+    })
+    .eq("id", productId);
   if (error) throw new Error(error.message);
 }
 
@@ -1007,9 +1196,43 @@ export async function setSupabaseProductAvailable(productId: string, available: 
   if (error) throw new Error(error.message);
 }
 
+export function normalizePublicAppUrl(value?: string | null) {
+  return value?.trim().replace(/\/+$/, "") ?? "";
+}
+
+function devPublicAppUrlFallback() {
+  if (!import.meta.env.DEV || typeof window === "undefined") return "";
+  return window.location.origin;
+}
+
+export function buildTablePublicUrl(
+  publicAppUrl: string | null | undefined,
+  unitSlug: UnitId,
+  tableNumber: number,
+) {
+  const base = normalizePublicAppUrl(publicAppUrl) || devPublicAppUrlFallback();
+  const path = `/mesa?unit=${encodeURIComponent(unitSlug)}&table=${encodeURIComponent(
+    String(tableNumber),
+  )}`;
+  return base ? `${base}${path}` : path;
+}
+
+async function loadPublicAppUrlForUnit(unitDbId: string) {
+  const { data, error } = await getSupabaseClient()
+    .from("admin_settings")
+    .select("settings")
+    .eq("unit_id", unitDbId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data?.settings || typeof data.settings !== "object") return "";
+  const settings = data.settings as { public_app_url?: string };
+  return settings.public_app_url ?? "";
+}
+
 export async function insertSupabaseTable(
   unitId: UnitId,
   tableNumber?: number,
+  publicAppUrl?: string | null,
 ): Promise<RestaurantTable> {
   assertConfigured();
   const supabase = getSupabaseClient();
@@ -1021,11 +1244,54 @@ export async function insertSupabaseTable(
       .from("store_tables")
       .select("table_number")
       .eq("unit_id", unitRow.id)
+      .eq("active", true)
+      .eq("is_active", true)
+      .is("deleted_at", null)
       .order("table_number", { ascending: false })
       .limit(1),
   )) as Array<{ table_number: number }>;
   const nextNumber = Math.max(tableNumber ?? 0, (lastRows[0]?.table_number ?? 0) + 1);
-  const publicUrl = `/menu?unidade=${unitId}&mesa=${String(nextNumber).padStart(2, "0")}`;
+  const configuredPublicAppUrl = publicAppUrl ?? (await loadPublicAppUrlForUnit(unitRow.id));
+  const publicUrl = buildTablePublicUrl(configuredPublicAppUrl, unitId, nextNumber);
+  console.log("TABLE ROW", { unitId, unitDbId: unitRow.id, unitSlug: unitRow.slug, nextNumber });
+  console.log("GENERATED TABLE URL", publicUrl);
+  const existingRows = (await selectOrThrow(
+    supabase
+      .from("store_tables")
+      .select(
+        "id, unit_id, table_number, public_url, qr_code_data, status, active, is_active, deleted_at, created_at",
+      )
+      .eq("unit_id", unitRow.id)
+      .eq("table_number", nextNumber)
+      .limit(1),
+  )) as StoreTableRow[];
+  const existing = existingRows[0];
+  if (
+    existing &&
+    (existing.active !== true || existing.is_active !== true || existing.deleted_at)
+  ) {
+    const { data, error } = await supabase
+      .from("store_tables")
+      .update({
+        public_url: publicUrl,
+        qr_code_data: publicUrl,
+        status: "livre",
+        active: true,
+        is_active: true,
+        deleted_at: null,
+      })
+      .eq("id", existing.id)
+      .eq("unit_id", unitRow.id)
+      .select(
+        "id, unit_id, table_number, public_url, qr_code_data, status, active, is_active, deleted_at, created_at",
+      )
+      .single();
+    if (error) throw new Error(error.message);
+    const table = mapTable(data as StoreTableRow, new Map([[unitRow.id, unitRow.slug]]));
+    if (!table) throw new Error("Mesa reativada sem unidade valida.");
+    console.log("SAVED PUBLIC_URL", data.public_url);
+    return table;
+  }
   const { data, error } = await supabase
     .from("store_tables")
     .insert({
@@ -1044,6 +1310,7 @@ export async function insertSupabaseTable(
   if (error) throw new Error(error.message);
   const table = mapTable(data as StoreTableRow, new Map([[unitRow.id, unitRow.slug]]));
   if (!table) throw new Error("Mesa criada sem unidade valida.");
+  console.log("SAVED PUBLIC_URL", data.public_url);
   return table;
 }
 
@@ -1174,14 +1441,10 @@ export async function validateSupabaseAdminPin(unitId: UnitId, pin: string) {
     supabase.from("units").select("id, slug").eq("slug", unitId).single(),
   )) as Pick<UnitRow, "id" | "slug">;
   const rows = (await selectOrThrow(
-    supabase.from("admin_settings").select("admin_pin, settings").eq("unit_id", unit.id).limit(1),
-  )) as Array<Pick<AdminSettingsRow, "admin_pin" | "settings">>;
+    supabase.from("admin_settings").select("admin_pin").eq("unit_id", unit.id).limit(1),
+  )) as Array<Pick<AdminSettingsRow, "admin_pin">>;
   const settings = rows[0];
-  const legacyPin =
-    settings?.settings && typeof settings.settings === "object"
-      ? ((settings.settings as { unit_patch?: { accessPin?: string } }).unit_patch?.accessPin ?? "")
-      : "";
-  const expected = settings?.admin_pin || legacyPin || fallbackUnit(unitId).accessPin;
+  const expected = settings?.admin_pin ?? "";
   return Boolean(expected) && expected === pin;
 }
 

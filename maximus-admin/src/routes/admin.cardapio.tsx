@@ -19,6 +19,10 @@ function emptyProduct(categoryId: string): ProductDraft {
     description: "",
     imageUrl: undefined,
     optionGroups: [],
+    availableForDelivery: true,
+    availableForPickup: true,
+    availableForDineIn: true,
+    dineInOnly: false,
   };
 }
 
@@ -169,9 +173,15 @@ function CardapioPage() {
     setDeletingCategory(category);
   }
 
-  function confirmDeleteCategory(category: Category) {
-    deleteCategory(category.id);
-    setDeletingCategory(null);
+  async function confirmDeleteCategory(category: Category) {
+    try {
+      await deleteCategory(category.id);
+      setDeletingCategory(null);
+    } catch (error) {
+      setDeleteCategoryError(
+        error instanceof Error ? error.message : "Não foi possível excluir a categoria.",
+      );
+    }
   }
 
   return (
@@ -367,6 +377,11 @@ function CardapioPage() {
                           >
                             {product.active ? "Ativo" : "Inativo"}
                           </span>
+                          {product.dineInOnly ? (
+                            <span className="rounded-md bg-primary/15 px-3 py-2 font-bold text-primary">
+                              Somente local
+                            </span>
+                          ) : null}
                         </div>
                       </div>
 
@@ -531,6 +546,10 @@ function ProductEditor({
     description: product.description ?? "",
     imageUrl: (product as Product).imageUrl ?? undefined,
     optionGroups: product.optionGroups ?? [],
+    availableForDelivery: product.availableForDelivery ?? true,
+    availableForPickup: product.availableForPickup ?? true,
+    availableForDineIn: product.availableForDineIn ?? true,
+    dineInOnly: product.dineInOnly ?? false,
   });
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
@@ -635,6 +654,68 @@ function ProductEditor({
               onChange={(event) => setDraft({ ...draft, description: event.target.value })}
               className="min-h-20 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
             />
+          </div>
+          <div className="sm:col-span-2 rounded-xl border border-border bg-background/60 p-4">
+            <h3 className="text-sm font-extrabold">Disponibilidade por consumo</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Produtos “somente local” aparecem apenas no QR de mesa/comer no local.
+            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-bold">
+                <input
+                  type="checkbox"
+                  checked={draft.availableForDelivery !== false && !draft.dineInOnly}
+                  disabled={draft.dineInOnly}
+                  onChange={(event) =>
+                    setDraft({ ...draft, availableForDelivery: event.target.checked })
+                  }
+                  className="accent-primary"
+                />
+                Delivery
+              </label>
+              <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-bold">
+                <input
+                  type="checkbox"
+                  checked={draft.availableForPickup !== false && !draft.dineInOnly}
+                  disabled={draft.dineInOnly}
+                  onChange={(event) =>
+                    setDraft({ ...draft, availableForPickup: event.target.checked })
+                  }
+                  className="accent-primary"
+                />
+                Retirada
+              </label>
+              <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-bold">
+                <input
+                  type="checkbox"
+                  checked={draft.availableForDineIn !== false || draft.dineInOnly}
+                  onChange={(event) =>
+                    setDraft({ ...draft, availableForDineIn: event.target.checked })
+                  }
+                  className="accent-primary"
+                />
+                Consumo local
+              </label>
+              <label className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-bold text-primary">
+                <input
+                  type="checkbox"
+                  checked={draft.dineInOnly === true}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      dineInOnly: event.target.checked,
+                      availableForDelivery: event.target.checked
+                        ? false
+                        : draft.availableForDelivery,
+                      availableForPickup: event.target.checked ? false : draft.availableForPickup,
+                      availableForDineIn: event.target.checked ? true : draft.availableForDineIn,
+                    })
+                  }
+                  className="accent-primary"
+                />
+                Somente local
+              </label>
+            </div>
           </div>
         </div>
 
@@ -881,7 +962,16 @@ function ProductEditor({
             Cancelar
           </button>
           <button
-            onClick={() => onSave(draft)}
+            onClick={() =>
+              onSave({
+                ...draft,
+                availableForDelivery: draft.dineInOnly
+                  ? false
+                  : draft.availableForDelivery !== false,
+                availableForPickup: draft.dineInOnly ? false : draft.availableForPickup !== false,
+                availableForDineIn: draft.dineInOnly ? true : draft.availableForDineIn !== false,
+              })
+            }
             className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
           >
             Salvar

@@ -30,6 +30,7 @@ function DriverPanel() {
     units,
     updateDriverLocation,
     startDeliveryNavigation,
+    markDeliveryArrived,
     completeDeliveryByDriver,
   } = useAdmin();
   const [gpsStatus, setGpsStatus] = useState("GPS não solicitado");
@@ -39,6 +40,10 @@ function DriverPanel() {
   } | null>(null);
   const [routeMode, setRouteMode] = useState(false);
   const [selectedRouteOrders, setSelectedRouteOrders] = useState<Record<string, boolean>>({});
+  const [savingActionByOrder, setSavingActionByOrder] = useState<
+    Record<string, "arrived" | "delivered" | undefined>
+  >({});
+  const [deliveryErrorByOrder, setDeliveryErrorByOrder] = useState<Record<string, string>>({});
   const lastDriverUpdateRef = useRef(0);
   const driver = allCouriers.find((courier) => courier.id === driverId);
   const sessionDriverId =
@@ -54,9 +59,12 @@ function DriverPanel() {
         !["delivered"].includes(order.status),
     )
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const routeOrdersBase = assignedOrdersBase.filter((order) => order.status !== "arrived");
   const assignedOrders = useMemo(() => {
     const selected = routeMode
-      ? assignedOrdersBase.filter((order) => selectedRouteOrders[order.id] !== false)
+      ? assignedOrdersBase.filter(
+          (order) => order.status === "arrived" || selectedRouteOrders[order.id] !== false,
+        )
       : assignedOrdersBase;
     if (!routeMode || !driverLocation) return selected;
     return [...selected].sort(
@@ -175,7 +183,7 @@ function DriverPanel() {
             <p className="mb-4 rounded-xl border border-border bg-card p-3 text-sm font-semibold text-muted-foreground">
               {gpsStatus}
             </p>
-            {assignedOrders.length > 1 && (
+            {routeOrdersBase.length > 1 && (
               <section className="mb-4 rounded-xl border border-border bg-card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -194,7 +202,7 @@ function DriverPanel() {
                 </div>
                 {routeMode && (
                   <div className="mt-3 space-y-2">
-                    {assignedOrdersBase.map((order, index) => (
+                    {routeOrdersBase.map((order, index) => (
                       <label
                         key={order.id}
                         className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background p-3 text-sm"
@@ -234,12 +242,23 @@ function DriverPanel() {
                       const deliveryLng = order.deliveryLng ?? order.delivery_lng;
                       const hasDestination = deliveryLat != null && deliveryLng != null;
                       const distanceToDestination = driverDistanceKm(driverLocation, order);
+                      const hasArrived = order.status === "arrived";
+                      const canMarkArrived =
+                        order.status === "out_for_delivery" ||
+                        order.status === "driver_on_way" ||
+                        order.status === "driver_nearby";
+                      const savingAction = savingActionByOrder[order.id];
                       return (
                         <>
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <p className="text-2xl font-black">#{order.number}</p>
                               <p className="mt-1 font-bold">{order.customerName}</p>
+                              {order.customerPhone && (
+                                <p className="mt-1 text-sm font-semibold text-muted-foreground">
+                                  {order.customerPhone}
+                                </p>
+                              )}
                             </div>
                             <span
                               className={`rounded-lg border px-3 py-1 text-sm font-black ${getFinancialTone(deliveryPayout(order)).chip}`}
@@ -276,69 +295,156 @@ function DriverPanel() {
                               <PackageCheck className="h-4 w-4 text-primary" />
                               {STATUS_LABELS[order.status]}
                             </p>
+                            <p className="flex items-center gap-2">
+                              <PackageCheck className="h-4 w-4 text-primary" />
+                              Pagamento: {paymentLabel(order)}
+                            </p>
                             <p className="flex items-center gap-2 font-bold text-foreground">
                               <Navigation className="h-4 w-4 text-primary" />
                               Distância até destino: {formatDistance(distanceToDestination)}
                             </p>
+                            {order.notes && (
+                              <p className="rounded-lg border border-primary/30 bg-primary/10 p-2 font-semibold text-primary">
+                                Obs: {order.notes}
+                              </p>
+                            )}
                           </div>
 
-                          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                startDeliveryNavigation(order.id);
-                                openNavigation(order, driverLocation);
-                              }}
-                              className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-4 text-base font-black text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              IR <Navigation className="h-5 w-5" />
-                            </button>
-                            <button
-                              onClick={() =>
-                                completeDeliveryByDriver(
-                                  order.id,
-                                  order.paymentStatus === "confirmed" ||
-                                    order.payment_confirmed === true,
-                                )
-                              }
-                              disabled={order.delivery_completed_by_driver}
-                              className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-extrabold text-primary-foreground"
-                            >
-                              {order.delivery_completed_by_driver
-                                ? "Já finalizado"
-                                : "Finalizar entrega"}{" "}
-                              <Check className="h-4 w-4" />
-                            </button>
-                          </div>
-
-                          {hasDestination && (
-                            <div className="mt-4">
-                              <DeliveryRouteMap
-                                origin={
-                                  driverLocation
-                                    ? {
-                                        latitude: driverLocation.latitude,
-                                        longitude: driverLocation.longitude,
-                                        label: "Você",
-                                        color: "#2563eb",
-                                      }
-                                    : unit
-                                      ? {
-                                          latitude: unit.latitude,
-                                          longitude: unit.longitude,
-                                          label: unit.name,
-                                          color: "#f97316",
-                                        }
-                                      : undefined
-                                }
-                                destination={{
-                                  latitude: deliveryLat,
-                                  longitude: deliveryLng,
-                                  label: "Cliente",
-                                  color: "#22c55e",
+                          {hasArrived ? (
+                            <div className="mt-4 space-y-3">
+                              <div className="rounded-xl border border-primary/30 bg-primary/10 p-4">
+                                <p className="text-lg font-black text-primary">
+                                  Você chegou ao local
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-muted-foreground">
+                                  Aguardando o cliente receber o pedido
+                                </p>
+                              </div>
+                              <button
+                                onClick={async () => {
+                                  setDeliveryErrorByOrder((current) => ({
+                                    ...current,
+                                    [order.id]: "",
+                                  }));
+                                  setSavingActionByOrder((current) => ({
+                                    ...current,
+                                    [order.id]: "delivered",
+                                  }));
+                                  try {
+                                    await completeDeliveryByDriver(
+                                      order.id,
+                                      order.paymentStatus === "confirmed" ||
+                                        order.payment_confirmed === true,
+                                    );
+                                  } catch (error) {
+                                    setDeliveryErrorByOrder((current) => ({
+                                      ...current,
+                                      [order.id]:
+                                        error instanceof Error
+                                          ? error.message
+                                          : "Não foi possível finalizar o pedido.",
+                                    }));
+                                  } finally {
+                                    setSavingActionByOrder((current) => ({
+                                      ...current,
+                                      [order.id]: undefined,
+                                    }));
+                                  }
                                 }}
-                              />
+                                disabled={savingAction === "delivered"}
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-4 text-base font-extrabold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {savingAction === "delivered"
+                                  ? "Finalizando..."
+                                  : "Finalizar pedido"}
+                                <Check className="h-4 w-4" />
+                              </button>
                             </div>
+                          ) : (
+                            <>
+                              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    startDeliveryNavigation(order.id);
+                                    openNavigation(order, driverLocation);
+                                  }}
+                                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-4 text-base font-black text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  IR <Navigation className="h-5 w-5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    setDeliveryErrorByOrder((current) => ({
+                                      ...current,
+                                      [order.id]: "",
+                                    }));
+                                    setSavingActionByOrder((current) => ({
+                                      ...current,
+                                      [order.id]: "arrived",
+                                    }));
+                                    try {
+                                      await markDeliveryArrived(order.id);
+                                    } catch (error) {
+                                      setDeliveryErrorByOrder((current) => ({
+                                        ...current,
+                                        [order.id]:
+                                          error instanceof Error
+                                            ? error.message
+                                            : "Não foi possível marcar chegada.",
+                                      }));
+                                    } finally {
+                                      setSavingActionByOrder((current) => ({
+                                        ...current,
+                                        [order.id]: undefined,
+                                      }));
+                                    }
+                                  }}
+                                  disabled={!canMarkArrived || savingAction === "arrived"}
+                                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-extrabold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {savingAction === "arrived" ? "Salvando..." : "Cheguei ao local"}
+                                  <Check className="h-4 w-4" />
+                                </button>
+                              </div>
+
+                              {hasDestination && (
+                                <div className="mt-4">
+                                  <DeliveryRouteMap
+                                    origin={
+                                      driverLocation
+                                        ? {
+                                            latitude: driverLocation.latitude,
+                                            longitude: driverLocation.longitude,
+                                            label: "Você",
+                                            color: "#2563eb",
+                                          }
+                                        : unit
+                                          ? {
+                                              latitude: unit.latitude,
+                                              longitude: unit.longitude,
+                                              label: unit.name,
+                                              color: "#f97316",
+                                            }
+                                          : undefined
+                                    }
+                                    destination={{
+                                      latitude: deliveryLat,
+                                      longitude: deliveryLng,
+                                      label: "Cliente",
+                                      color: "#22c55e",
+                                    }}
+                                  />
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {deliveryErrorByOrder[order.id] && (
+                            <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm font-semibold text-destructive">
+                              {deliveryErrorByOrder[order.id]}
+                            </p>
                           )}
                         </>
                       );
@@ -413,6 +519,19 @@ function deliveryPayout(order: Order) {
     order.courierFee ??
     0
   );
+}
+
+function paymentLabel(order: Order) {
+  if (order.paymentMethod === "pix_app") {
+    if (order.paymentStatus === "confirmed" || order.payment_confirmed) return "Pix confirmado";
+    if (order.paymentStatus === "customer_reported_paid") return "Pix informado";
+    if (order.paymentStatus === "rejected") return "Pix recusado";
+    return "Pix pendente";
+  }
+  if (order.paymentMethod === "pix_balcao") return "Pix no balcão";
+  if (order.paymentMethod === "cartao") return "Cartão";
+  if (order.paymentMethod === "dinheiro") return "Dinheiro";
+  return order.paymentMethod;
 }
 
 function toRadians(value: number) {

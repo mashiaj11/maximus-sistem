@@ -1,7 +1,7 @@
 // Tipos de dados do Admin Maximus.
 
 export type OrderType = "delivery" | "mesa" | "levar" | "balcao";
-export type UnitId = "maximus-01" | "maximus-02";
+export type UnitId = string;
 
 export type PaymentMethod = "pix_app" | "pix_balcao" | "cartao" | "dinheiro";
 
@@ -131,11 +131,25 @@ export interface Product {
   description?: string;
   imageUrl?: string;
   optionGroups?: ProductOptionGroup[];
+  availableForDelivery?: boolean;
+  availableForPickup?: boolean;
+  availableForDineIn?: boolean;
+  dineInOnly?: boolean;
 }
 
 export type ProductDraft = Pick<
   Product,
-  "name" | "categoryId" | "price" | "active" | "description" | "imageUrl" | "optionGroups"
+  | "name"
+  | "categoryId"
+  | "price"
+  | "active"
+  | "description"
+  | "imageUrl"
+  | "optionGroups"
+  | "availableForDelivery"
+  | "availableForPickup"
+  | "availableForDineIn"
+  | "dineInOnly"
 >;
 
 export type ProductOptionGroupType = "single" | "multiple";
@@ -192,21 +206,24 @@ export interface KitchenPrintSettings {
   copies: number;
 }
 
-export interface WhatsappMessageSettings {
+export type WhatsappStatusMessages = Record<OrderStatus, string>;
+export type WhatsappSendMode = "text" | "pdf" | "text_and_pdf";
+
+export interface WhatsappStatusSetting {
   enabled: boolean;
+  mode: WhatsappSendMode;
+  message: string;
+}
+
+export type WhatsappStatusSettings = Record<OrderStatus, WhatsappStatusSetting>;
+
+export interface WhatsappMessageSettings extends Partial<WhatsappStatusMessages> {
+  enabled: boolean;
+  botEnabled?: boolean;
   officialNumber: string;
-  provider?: "none" | "evolution" | "waha" | "zapi";
-  apiUrl?: string;
-  apiKey?: string;
-  instanceId?: string;
-  receivedMessage: string;
-  acceptedMessage: string;
-  productionMessage: string;
-  readyMessage: string;
-  outForDeliveryMessage: string;
-  driverOnWayMessage?: string;
-  driverNearbyMessage?: string;
-  deliveredMessage: string;
+  welcomeMessage?: string;
+  humanMessage?: string;
+  statusSettings?: WhatsappStatusSettings;
 }
 
 export interface DriverPanelSettings {
@@ -233,12 +250,18 @@ export interface AdminUnit {
   name: string;
   phone: string;
   address: string;
+  cnpj?: string;
   latitude: number;
   longitude: number;
   isOpen: boolean;
+  active?: boolean;
   businessHours: BusinessHour[];
   theme: UnitTheme;
   accessPin: string;
+  publicAppUrl?: string;
+  acceptsDelivery?: boolean;
+  acceptsPickup?: boolean;
+  acceptsDineIn?: boolean;
   kitchenPrintSettings?: KitchenPrintSettings;
   whatsappSettings?: WhatsappMessageSettings;
   driverPanelSettings?: DriverPanelSettings;

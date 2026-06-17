@@ -9,7 +9,9 @@ import {
   Settings,
   Truck,
   MapPinned,
+  LogOut,
 } from "lucide-react";
+import { useAuth } from "@/auth/AuthProvider";
 import { isFinalStatus } from "@/admin/data/statuses";
 import { isPaymentPending, useAdmin } from "@/admin/store";
 import type { AdminUnit } from "@/admin/data/types";
@@ -52,6 +54,7 @@ function LogoMark({ src, className }: { src?: string; className: string }) {
 
 export function AdminLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const { profile, signOut } = useAuth();
   const {
     orders,
     units,
@@ -68,6 +71,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 
   const activeOrders = orders.filter((o) => !isFinalStatus(o.status)).length;
   const pendingPayments = orders.filter(isPaymentPending).length;
+  const selectableUnits = units;
 
   const navCount = (to: string) => {
     if (to === "/admin/pedidos") return activeOrders;
@@ -104,16 +108,16 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                 <p className="text-lg font-bold text-destructive">Erro ao carregar unidades</p>
                 <p className="mt-2 text-sm text-muted-foreground">{dataError}</p>
               </div>
-            ) : units.length === 0 ? (
+            ) : selectableUnits.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center">
                 <p className="text-lg font-bold">Nenhuma unidade cadastrada</p>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Nenhuma unidade ativa foi encontrada no Supabase.
+                  Nenhuma unidade foi encontrada no Supabase.
                 </p>
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">
-                {units.map((unit) => (
+                {selectableUnits.map((unit) => (
                   <button
                     key={unit.id}
                     onClick={() => {
@@ -243,12 +247,24 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
             ))}
           </nav>
           <div className="p-4 text-[11px] text-muted-foreground border-t border-border">
+            <div className="mb-3 min-w-0">
+              <p className="truncate font-bold text-foreground">{profile?.fullName}</p>
+              <p className="uppercase tracking-widest">{profile?.role}</p>
+            </div>
             <div className="flex items-center justify-between">
               <span>Pix pendentes</span>
               <span className="rounded-md bg-primary/15 px-2 py-0.5 font-bold text-primary">
                 {pendingPayments}
               </span>
             </div>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-md bg-secondary px-3 py-2 text-xs font-bold text-foreground hover:bg-accent"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sair
+            </button>
           </div>
         </aside>
 
@@ -265,6 +281,14 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
               className="rounded-md bg-secondary px-2.5 py-1 text-xs font-bold"
             >
               Trocar
+            </button>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="rounded-md bg-secondary p-2 text-muted-foreground"
+              aria-label="Sair"
+            >
+              <LogOut className="h-4 w-4" />
             </button>
           </header>
           <nav className="md:hidden flex gap-1 overflow-x-auto px-3 py-2 border-b border-border bg-background">

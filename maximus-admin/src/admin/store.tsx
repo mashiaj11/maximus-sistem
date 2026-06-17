@@ -10,6 +10,7 @@ import {
 import { UNITS } from "./data/units";
 import {
   assignSupabaseDeliveryDriver,
+  buildTablePublicUrl,
   completeSupabaseDeliveryByDriver,
   deleteSupabaseCategory,
   deleteSupabaseCourier,
@@ -22,6 +23,7 @@ import {
   insertSupabaseProduct,
   insertSupabaseTable,
   loadSupabaseAdminData,
+  markSupabaseDeliveryArrived,
   setSupabaseCategoryActive,
   setSupabaseProductAvailable,
   updateSupabaseCategory,
@@ -40,6 +42,7 @@ import {
   resetSupabaseOperationalData,
   startSupabaseDeliveryNavigation,
 } from "./supabase-data";
+import { useAuth } from "@/auth/AuthProvider";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
 import { printKitchenOrder } from "./printing";
 import { sendWhatsAppStatusMessage } from "./whatsapp";
@@ -102,8 +105,13 @@ interface AdminContextValue {
         | "latitude"
         | "longitude"
         | "isOpen"
+        | "active"
         | "theme"
         | "accessPin"
+        | "publicAppUrl"
+        | "acceptsDelivery"
+        | "acceptsPickup"
+        | "acceptsDineIn"
         | "kitchenPrintSettings"
         | "whatsappSettings"
         | "driverPanelSettings"
@@ -120,6 +128,7 @@ interface AdminContextValue {
   assignDeliveryCourier: (orderId: string, courierId: string) => void;
   updateDriverLocation: (orderId: string, latitude: number, longitude: number) => void;
   startDeliveryNavigation: (orderId: string) => void;
+  markDeliveryArrived: (orderId: string) => Promise<void>;
   completeDeliveryByDriver: (orderId: string, paymentConfirmed: boolean) => void;
   setPayment: (orderId: string, status: PaymentStatus, source?: StatusChangeSource) => void;
   toggleProduct: (productId: string) => void;
@@ -129,7 +138,7 @@ interface AdminContextValue {
   toggleProductForCurrentUnit: (productId: string) => void;
   addCategory: (name: string) => void;
   updateCategory: (categoryId: string, patch: Partial<Pick<Category, "name" | "order">>) => void;
-  deleteCategory: (categoryId: string) => void;
+  deleteCategory: (categoryId: string) => Promise<void>;
   toggleCategoryForCurrentUnit: (categoryId: string) => void;
   addTable: () => Promise<void>;
   updateTable: (
@@ -175,13 +184,23 @@ const DEFAULT_KITCHEN_PRINT_SETTINGS: KitchenPrintSettings = {
 
 const DEFAULT_WHATSAPP_SETTINGS: WhatsappMessageSettings = {
   enabled: false,
-  officialNumber: "(93) 984057229",
-  receivedMessage: "Recebemos seu pedido na Maximus. Em breve nossa equipe vai confirmar.",
-  acceptedMessage: "Seu pedido foi aceito e já entrou no fluxo da Maximus.",
-  productionMessage: "Seu pedido está em produção.",
-  readyMessage: "Seu pedido está pronto.",
-  outForDeliveryMessage: "Seu pedido saiu para entrega.",
-  deliveredMessage: "Pedido entregue. Obrigado por comprar com a Maximus.",
+  botEnabled: false,
+  officialNumber: "",
+  welcomeMessage: "Olá! Eu sou o atendimento automático da Maximus. Como posso ajudar?",
+  humanMessage: "Vou encaminhar você para um atendente da Maximus.",
+  received: "Recebemos seu pedido #{orderNumber}, {customerName}.",
+  accepted: "Seu pedido #{orderNumber} foi aceito.",
+  in_preparation: "Seu pedido #{orderNumber} está em preparação.",
+  ready: "Seu pedido #{orderNumber} está pronto.",
+  ready_for_pickup: "Seu pedido #{orderNumber} está pronto para retirada.",
+  out_for_delivery: "Seu pedido #{orderNumber} saiu para entrega.",
+  driver_on_way: "O entregador está a caminho com o pedido #{orderNumber}.",
+  driver_nearby: "O entregador está próximo com o pedido #{orderNumber}.",
+  arrived: "O entregador chegou com o pedido #{orderNumber}.",
+  delivered: "Pedido #{orderNumber} entregue. Obrigado, {customerName}.",
+  picked_up: "Pedido #{orderNumber} retirado. Obrigado, {customerName}.",
+  delivered_to_table: "Pedido #{orderNumber} entregue à mesa. Obrigado, {customerName}.",
+  cancelled: "Pedido #{orderNumber} cancelado.",
 };
 
 const DEFAULT_DRIVER_PANEL_SETTINGS: DriverPanelSettings = {
@@ -200,6 +219,9 @@ const LEGACY_LOCAL_STORAGE_KEYS = [
   "maximus-admin-couriers",
   "maximus-admin-tables",
   "maximus-admin-settings",
+  "maximus-admin-whatsapp-settings",
+  "maximus-admin-business-hours",
+  "maximus-admin-unit-settings",
   "maximus-admin-dashboard",
   "local-orders",
   "admin-settings",
@@ -228,12 +250,8 @@ function cleanupLegacyOperationalStorage() {
   }
 }
 
-function buildTableLink(unitId: UnitId, number: number) {
-  return `/menu?unidade=${unitId}&mesa=${String(number).padStart(2, "0")}`;
-}
-
-function buildTable(unitId: UnitId, number: number): RestaurantTable {
-  const publicUrl = buildTableLink(unitId, number);
+function buildTable(unitId: UnitId, number: number, publicAppUrl?: string | null): RestaurantTable {
+  const publicUrl = buildTablePublicUrl(publicAppUrl, unitId, number);
   return {
     id: `${unitId}-mesa-${String(number).padStart(2, "0")}-${Date.now()}`,
     unitId,
@@ -316,7 +334,12 @@ function normalizeUnit(unit: AdminUnit): AdminUnit {
     latitude: Number.isFinite(unit.latitude) ? unit.latitude : (fallback?.latitude ?? 0),
     longitude: Number.isFinite(unit.longitude) ? unit.longitude : (fallback?.longitude ?? 0),
     isOpen: typeof unit.isOpen === "boolean" ? unit.isOpen : (fallback?.isOpen ?? true),
+    active: unit.active !== false,
     accessPin: unit.accessPin ?? fallback?.accessPin ?? "1234",
+    publicAppUrl: unit.publicAppUrl ?? fallback?.publicAppUrl ?? "",
+    acceptsDelivery: unit.acceptsDelivery ?? fallback?.acceptsDelivery ?? true,
+    acceptsPickup: unit.acceptsPickup ?? fallback?.acceptsPickup ?? true,
+    acceptsDineIn: unit.acceptsDineIn ?? fallback?.acceptsDineIn ?? true,
     kitchenPrintSettings: normalizeKitchenPrintSettings(
       unit.kitchenPrintSettings ?? fallback?.kitchenPrintSettings,
     ),
@@ -324,10 +347,7 @@ function normalizeUnit(unit: AdminUnit): AdminUnit {
       ...DEFAULT_WHATSAPP_SETTINGS,
       ...fallback?.whatsappSettings,
       ...unit.whatsappSettings,
-      officialNumber:
-        unit.whatsappSettings?.officialNumber ??
-        fallback?.whatsappSettings?.officialNumber ??
-        unit.phone,
+      officialNumber: unit.whatsappSettings?.officialNumber ?? "",
     },
     driverPanelSettings: {
       ...DEFAULT_DRIVER_PANEL_SETTINGS,
@@ -349,6 +369,7 @@ function normalizeUnits(units: AdminUnit[]): AdminUnit[] {
 }
 
 export function AdminProvider({ children }: { children: ReactNode }) {
+  const auth = useAuth();
   const [selectedUnitId, setSelectedUnitId] = useState<UnitId | null>(() =>
     readLocalStorage<UnitId | null>(LOCAL_STORAGE_KEYS.sessionUnitId, null),
   );
@@ -376,17 +397,30 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     return loadSupabaseAdminData()
       .then((data) => {
+        const availableUnits = auth.isSuperAdmin
+          ? data.units
+          : data.units.filter((unit) => auth.allowedUnitIds.includes(unit.id));
+        const availableUnitIds = new Set(availableUnits.map((unit) => unit.id));
+
         setDataError(null);
-        setUnits(normalizeUnits(data.units));
-        setSelectedUnitId((current) =>
-          current && data.units.some((unit) => unit.id === current) ? current : null,
-        );
-        setOrders(data.orders);
+        setUnits(availableUnits);
+        setSelectedUnitId((current) => {
+          if (current && availableUnitIds.has(current)) return current;
+          return auth.primaryUnitId && availableUnitIds.has(auth.primaryUnitId)
+            ? auth.primaryUnitId
+            : null;
+        });
+        setOrders(data.orders.filter((order) => availableUnitIds.has(order.unitId)));
         setCategories(data.categories);
-        setProducts(data.products);
-        setTables(data.tables);
-        setCouriers(data.couriers);
-        setDeliveryRules(data.deliveryRules);
+        setProducts(
+          data.products.filter(
+            (product) =>
+              !product.unitIds || product.unitIds.some((unitId) => availableUnitIds.has(unitId)),
+          ),
+        );
+        setTables(data.tables.filter((table) => availableUnitIds.has(table.unitId)));
+        setCouriers(data.couriers.filter((courier) => availableUnitIds.has(courier.unitId)));
+        setDeliveryRules(data.deliveryRules.filter((rule) => availableUnitIds.has(rule.unitId)));
       })
       .catch((error) => {
         console.error("[Maximus][Supabase] Falha ao carregar dados do admin", error);
@@ -405,7 +439,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         setIsLoading(false);
       });
-  }, []);
+  }, [auth.allowedUnitIds, auth.isSuperAdmin, auth.primaryUnitId]);
 
   useEffect(() => {
     cleanupLegacyOperationalStorage();
@@ -550,8 +584,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     };
 
     const notifyWhatsApp = (order: Order, status: OrderStatus) => {
-      const unit = allUnits.find((item) => item.id === order.unitId) ?? selectedUnit;
-      sendWhatsAppStatusMessage(order, status, unit).catch((error) => {
+      sendWhatsAppStatusMessage(order, status).catch((error) => {
         console.error("[Maximus][WhatsApp] Falha ao processar mensagem", error);
       });
     };
@@ -621,23 +654,25 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         if (!selectedUnitId) return;
         const nextUnit = allUnits.find((unit) => unit.id === selectedUnitId);
         if (!nextUnit) return;
-        const persistedUnit = normalizeUnit({ ...nextUnit, ...patch });
-        setUnits((prev) => prev.map((unit) => (unit.id === selectedUnitId ? persistedUnit : unit)));
         if (isSupabaseConfigured) {
+          const persistedUnit = { ...nextUnit, ...patch };
           try {
             await updateSupabaseUnit(selectedUnitId, patch);
             await upsertSupabaseAdminSettings(persistedUnit);
             await loadAdminData();
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao atualizar unidade", error);
-            setUnits((prev) => prev.map((unit) => (unit.id === selectedUnitId ? nextUnit : unit)));
             throw error;
           }
+          return;
         }
+        const persistedUnit = normalizeUnit({ ...nextUnit, ...patch });
+        setUnits((prev) => prev.map((unit) => (unit.id === selectedUnitId ? persistedUnit : unit)));
       },
-      updateStatus: (orderId, status) => {
+      updateStatus: async (orderId, status) => {
         const order = allOrders.find((item) => item.id === orderId);
         if (!order) return;
+        if (order.status === status) return;
         const finished = isFinalStatus(status);
         const delivered = status === "delivered";
         const deliveredAt = finished ? new Date().toISOString() : undefined;
@@ -650,11 +685,6 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         const driverId = order.deliveryDriverId ?? order.courierId;
 
         setOrders((prev) => prev.map((item) => (item.id === orderId ? nextOrder : item)));
-        if (isSupabaseConfigured) {
-          updateSupabaseOrderStatus(orderId, status, deliveredAt).catch((error) => {
-            console.error("[Maximus][Supabase] Falha ao atualizar pedido", error);
-          });
-        }
         if (delivered && driverId) {
           setCouriers((couriers) =>
             couriers.map((courier) =>
@@ -672,9 +702,16 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           }
         }
         if (status === "in_preparation") triggerKitchenPrint(nextOrder);
-        notifyWhatsApp(nextOrder, status);
+        if (isSupabaseConfigured) {
+          try {
+            await updateSupabaseOrderStatus(orderId, status, deliveredAt);
+            notifyWhatsApp(nextOrder, status);
+          } catch (error) {
+            console.error("[Maximus][Supabase] Falha ao atualizar pedido", error);
+          }
+        }
       },
-      advanceStatus: (orderId) => {
+      advanceStatus: async (orderId) => {
         const order = allOrders.find((item) => item.id === orderId);
         if (!order) return;
         const next = getNextStatus(order.type, order.status);
@@ -691,11 +728,6 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         const driverId = order.deliveryDriverId ?? order.courierId;
 
         setOrders((prev) => prev.map((item) => (item.id === orderId ? nextOrder : item)));
-        if (isSupabaseConfigured) {
-          updateSupabaseOrderStatus(orderId, next, deliveredAt).catch((error) => {
-            console.error("[Maximus][Supabase] Falha ao avancar pedido", error);
-          });
-        }
         if (delivered && driverId) {
           setCouriers((couriers) =>
             couriers.map((courier) =>
@@ -713,13 +745,21 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           }
         }
         if (next === "in_preparation") triggerKitchenPrint(nextOrder);
-        notifyWhatsApp(nextOrder, next);
+        if (isSupabaseConfigured) {
+          try {
+            await updateSupabaseOrderStatus(orderId, next, deliveredAt);
+            notifyWhatsApp(nextOrder, next);
+          } catch (error) {
+            console.error("[Maximus][Supabase] Falha ao avancar pedido", error);
+          }
+        }
       },
-      assignDeliveryCourier: (orderId, courierId) => {
+      assignDeliveryCourier: async (orderId, courierId) => {
         const courier = allCouriers.find((item) => item.id === courierId);
         if (!courier || !courier.active || courier.status !== "disponivel") return;
         const order = allOrders.find((item) => item.id === orderId);
         if (!order || order.paymentStatus !== "confirmed") return;
+        const statusChanged = order.status !== "out_for_delivery";
         const payoutAmount = resolveDeliveryPayout(order, allDeliveryRules);
         const now = new Date().toISOString();
         let assignedOrder: Order | null = null;
@@ -751,21 +791,37 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           ),
         );
         if (isSupabaseConfigured) {
-          assignSupabaseDeliveryDriver(orderId, courier, payoutAmount, now).catch((error) => {
+          try {
+            await assignSupabaseDeliveryDriver(orderId, courier, payoutAmount, now);
+            if (statusChanged && assignedOrder) notifyWhatsApp(assignedOrder, "out_for_delivery");
+          } catch (error) {
             console.error("[Maximus][Supabase] Falha ao atribuir entregador", error);
-          });
+          }
         }
       },
       setPayment: (orderId, paymentStatus) => {
         const order = allOrders.find((item) => item.id === orderId);
-        setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, paymentStatus } : o)));
+        if (!order) return;
+        const nextStatus: OrderStatus | undefined =
+          paymentStatus === "rejected" && !isFinalStatus(order.status) ? "cancelled" : undefined;
+        const nextOrder: Order = {
+          ...order,
+          paymentStatus,
+          ...(nextStatus ? { status: nextStatus, deliveryStatus: nextStatus } : {}),
+        };
+        setOrders((prev) => prev.map((o) => (o.id === orderId ? nextOrder : o)));
         if (isSupabaseConfigured && order) {
-          updateSupabaseOrderPayment(order, paymentStatus).catch((error) => {
-            console.error("[Maximus][Supabase] Falha ao atualizar pagamento", error);
-          });
+          updateSupabaseOrderPayment(order, paymentStatus, nextStatus)
+            .then(() => {
+              if (nextStatus) notifyWhatsApp(nextOrder, nextStatus);
+            })
+            .catch((error) => {
+              setOrders((prev) => prev.map((o) => (o.id === orderId ? order : o)));
+              console.error("[Maximus][Supabase] Falha ao atualizar pagamento", error);
+            });
         }
       },
-      updateDriverLocation: (orderId, latitude, longitude) => {
+      updateDriverLocation: async (orderId, latitude, longitude) => {
         const order = allOrders.find((item) => item.id === orderId);
         const deliveryLat = order?.deliveryLat ?? order?.delivery_lat;
         const deliveryLng = order?.deliveryLng ?? order?.delivery_lng;
@@ -776,9 +832,11 @@ export function AdminProvider({ children }: { children: ReactNode }) {
             ? getDistanceKm(latitude, longitude, deliveryLat, deliveryLng)
             : null;
         const nextStatus: OrderStatus =
-          canMoveToNearby && distanceToCustomer != null && distanceToCustomer <= 0.5
-            ? "driver_nearby"
-            : "driver_on_way";
+          order?.status === "arrived"
+            ? "arrived"
+            : canMoveToNearby && distanceToCustomer != null && distanceToCustomer <= 0.5
+              ? "driver_nearby"
+              : "driver_on_way";
         console.info("[Maximus][driver-location]", {
           pedido: orderId,
           latitudeEntregador: latitude,
@@ -800,16 +858,17 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         setOrders((prev) =>
           prev.map((order) => (order.id === orderId ? { ...order, ...patch } : order)),
         );
+        const statusChanged = Boolean(order && order.status !== nextStatus);
         if (isSupabaseConfigured) {
-          updateSupabaseDriverLocation(orderId, latitude, longitude, nextStatus).catch((error) => {
+          try {
+            await updateSupabaseDriverLocation(orderId, latitude, longitude, nextStatus);
+            if (statusChanged && order) notifyWhatsApp({ ...order, ...patch }, nextStatus);
+          } catch (error) {
             console.error("[Maximus][Supabase] Falha ao atualizar GPS do entregador", error);
-          });
-        }
-        if (order && order.status !== nextStatus) {
-          notifyWhatsApp({ ...order, ...patch }, nextStatus);
+          }
         }
       },
-      startDeliveryNavigation: (orderId) => {
+      startDeliveryNavigation: async (orderId) => {
         const order = allOrders.find((item) => item.id === orderId);
         if (!order) return;
         const now = new Date().toISOString();
@@ -829,15 +888,44 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           prev.map((item) => (item.id === orderId ? { ...item, ...patch } : item)),
         );
         if (isSupabaseConfigured) {
-          startSupabaseDeliveryNavigation(order, now).catch((error) => {
+          try {
+            await startSupabaseDeliveryNavigation(order, now);
+            if (shouldMoveOut) notifyWhatsApp({ ...order, ...patch }, "out_for_delivery");
+          } catch (error) {
             console.error("[Maximus][Supabase] Falha ao registrar navegacao", error);
-          });
+          }
         }
-        if (shouldMoveOut) notifyWhatsApp({ ...order, ...patch }, "out_for_delivery");
       },
-      completeDeliveryByDriver: (orderId, paymentConfirmed) => {
+      markDeliveryArrived: async (orderId) => {
+        const order = allOrders.find((item) => item.id === orderId);
+        if (!order || order.status === "delivered" || order.status === "arrived") return;
+        const canArrive =
+          order.status === "out_for_delivery" ||
+          order.status === "driver_on_way" ||
+          order.status === "driver_nearby";
+        if (!canArrive) return;
+        const nextOrder: Order = {
+          ...order,
+          status: "arrived",
+          deliveryStatus: "arrived",
+        };
+        setOrders((prev) => prev.map((item) => (item.id === orderId ? nextOrder : item)));
+        if (isSupabaseConfigured) {
+          try {
+            await markSupabaseDeliveryArrived(order);
+            notifyWhatsApp(nextOrder, "arrived");
+          } catch (error) {
+            setOrders((prev) => prev.map((item) => (item.id === orderId ? order : item)));
+            console.error("[Maximus][Supabase] Falha ao marcar chegada da entrega", error);
+            throw error;
+          }
+        }
+      },
+      completeDeliveryByDriver: async (orderId, paymentConfirmed) => {
         const order = allOrders.find((item) => item.id === orderId);
         if (!order || order.delivery_completed_by_driver) return;
+        if (order.status === "delivered") return;
+        if (order.status !== "arrived") return;
         const now = new Date().toISOString();
         const driverId = order.deliveryDriverId ?? order.courierId ?? order.driver_id;
         const driver = allCouriers.find((courier) => courier.id === driverId);
@@ -869,11 +957,28 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           );
         }
         if (isSupabaseConfigured) {
-          completeSupabaseDeliveryByDriver(order, paymentConfirmed, now).catch((error) => {
+          try {
+            await completeSupabaseDeliveryByDriver(order, paymentConfirmed, now);
+            notifyWhatsApp(nextOrder, "delivered");
+          } catch (error) {
+            setOrders((prev) => prev.map((item) => (item.id === orderId ? order : item)));
+            if (driverId) {
+              setCouriers((couriers) =>
+                couriers.map((courier) =>
+                  courier.id === driverId
+                    ? {
+                        ...courier,
+                        status: driver?.status ?? courier.status,
+                        active: driver?.active ?? courier.active,
+                      }
+                    : courier,
+                ),
+              );
+            }
             console.error("[Maximus][Supabase] Falha ao finalizar entrega", error);
-          });
+            throw error;
+          }
         }
-        notifyWhatsApp(nextOrder, "delivered");
       },
       toggleProduct: async (productId) => {
         const product = allProducts.find((item) => item.id === productId);
@@ -983,8 +1088,8 @@ export function AdminProvider({ children }: { children: ReactNode }) {
             name: cleanName,
             order: prev.length + 1,
             activeByUnit: {
-              "maximus-01": selectedUnitId === "maximus-01",
-              "maximus-02": selectedUnitId === "maximus-02",
+              ...Object.fromEntries(allUnits.map((unit) => [unit.id, false])),
+              [selectedUnitId]: true,
             },
           },
         ]);
@@ -1004,14 +1109,17 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         }
       },
       deleteCategory: async (categoryId) => {
-        setCategories((prev) => prev.filter((c) => c.id !== categoryId));
         if (isSupabaseConfigured) {
           try {
             await deleteSupabaseCategory(categoryId);
+            await loadAdminData();
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao excluir categoria", error);
+            throw error;
           }
+          return;
         }
+        setCategories((prev) => prev.filter((c) => c.id !== categoryId));
       },
       toggleCategoryForCurrentUnit: async (categoryId) => {
         if (!selectedUnitId) return;
@@ -1040,15 +1148,25 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       },
       addTable: async () => {
         if (!selectedUnitId) return;
-        const unitTables = allTables.filter((table) => table.unitId === selectedUnitId);
+        const unitTables = allTables.filter(
+          (table) => table.unitId === selectedUnitId && table.active,
+        );
         const number = unitTables.length
           ? Math.max(...unitTables.map((table) => table.number)) + 1
           : 1;
         if (isSupabaseConfigured) {
-          if (allTables.some((table) => table.unitId === selectedUnitId && table.number === number))
+          if (
+            allTables.some(
+              (table) => table.unitId === selectedUnitId && table.active && table.number === number,
+            )
+          )
             return;
           try {
-            const table = await insertSupabaseTable(selectedUnitId, number);
+            const table = await insertSupabaseTable(
+              selectedUnitId,
+              number,
+              selectedUnit?.publicAppUrl,
+            );
             setTables((prev) => [...prev, table]);
             await loadAdminData();
           } catch (error) {
@@ -1058,9 +1176,11 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           return;
         }
         setTables((prev) =>
-          prev.some((table) => table.unitId === selectedUnitId && table.number === number)
+          prev.some(
+            (table) => table.unitId === selectedUnitId && table.active && table.number === number,
+          )
             ? prev
-            : [...prev, buildTable(selectedUnitId, number)],
+            : [...prev, buildTable(selectedUnitId, number, selectedUnit?.publicAppUrl)],
         );
       },
       updateTable: async (tableId, patch) => {
