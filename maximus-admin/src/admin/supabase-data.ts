@@ -61,6 +61,16 @@ type ProductRow = {
   available_for_dine_in?: boolean | null;
   dine_in_only?: boolean | null;
   deleted_at?: string | null;
+  created_at?: string | null;
+};
+
+type ProductUnitAvailabilityRow = {
+  product_id: string;
+  unit_id: string;
+  is_available: boolean;
+  available_for_delivery?: boolean | null;
+  available_for_pickup?: boolean | null;
+  available_for_dine_in?: boolean | null;
 };
 
 type StoreTableRow = {
@@ -505,16 +515,67 @@ function mapCategory(row: CategoryRow, unitSlugs: UnitId[]): Category {
   };
 }
 
-function mapProduct(row: ProductRow, slugById: Map<string, UnitId>): Product {
-  const unitId = slugById.get(row.unit_id);
+function productGlobalKey(product: ProductRow) {
+  return [
+    product.category_id,
+    product.name.trim().toLowerCase(),
+    Number(product.price).toFixed(2),
+    product.description ?? "",
+    product.image_url ?? "",
+    JSON.stringify(product.option_groups ?? []),
+  ].join("|");
+}
+
+function uniqueGlobalProducts(products: ProductRow[]) {
+  const byKey = new Map<string, ProductRow>();
+  for (const product of products) {
+    const key = productGlobalKey(product);
+    const current = byKey.get(key);
+    const productTime = product.created_at ? new Date(product.created_at).getTime() : 0;
+    const currentTime = current?.created_at ? new Date(current.created_at).getTime() : 0;
+    if (
+      !current ||
+      productTime < currentTime ||
+      (productTime === currentTime && product.id.localeCompare(current.id) < 0)
+    ) {
+      byKey.set(key, product);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function mapProduct(
+  row: ProductRow,
+  slugById: Map<string, UnitId>,
+  availabilityRows: ProductUnitAvailabilityRow[] = [],
+  unitSlugs: UnitId[] = [],
+): Product {
+  const legacyUnitId = slugById.get(row.unit_id);
+  const activeByUnit = Object.fromEntries(
+    availabilityRows
+      .map((availability) => {
+        const unitId = slugById.get(availability.unit_id);
+        return unitId ? [unitId, availability.is_available] : null;
+      })
+      .filter((entry): entry is [UnitId, boolean] => Boolean(entry)),
+  );
+  for (const unitSlug of unitSlugs) {
+    if (activeByUnit[unitSlug] === undefined) {
+      activeByUnit[unitSlug] = row.available;
+    }
+  }
+  const unitIds = Object.entries(activeByUnit)
+    .filter(([, active]) => active)
+    .map(([unitId]) => unitId);
 
   return {
     id: row.id,
     name: row.name,
     categoryId: row.category_id,
     price: Number(row.price),
-    active: row.available,
-    unitIds: unitId ? [unitId] : [],
+    active: unitIds.length ? true : row.available,
+    unitIds: unitIds.length ? unitIds : legacyUnitId ? [legacyUnitId] : [],
+    activeByUnit,
     description: row.description ?? undefined,
     imageUrl: row.image_url ?? undefined,
     optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
@@ -685,7 +746,15 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
   )) as UnitRow[];
   const { idBySlug, slugById } = buildUnitLookups(units);
 
-  const [categories, products, tables, couriers, deliveryRules, adminSettings] = await Promise.all([
+  const [
+    categories,
+    products,
+    productAvailability,
+    tables,
+    couriers,
+    deliveryRules,
+    adminSettings,
+  ] = await Promise.all([
     selectOrThrow(
       supabase
         .from("categories")
@@ -698,11 +767,18 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
       supabase
         .from("products")
         .select(
-          "id, unit_id, category_id, name, description, price, image_url, option_groups, available, available_for_delivery, available_for_pickup, available_for_dine_in, dine_in_only, deleted_at",
+          "id, unit_id, category_id, name, description, price, image_url, option_groups, available, available_for_delivery, available_for_pickup, available_for_dine_in, dine_in_only, deleted_at, created_at",
         )
         .is("deleted_at", null)
         .order("name", { ascending: true }),
     ) as Promise<ProductRow[] | null>,
+    selectOrThrow(
+      supabase
+        .from("product_unit_availability")
+        .select(
+          "product_id, unit_id, is_available, available_for_delivery, available_for_pickup, available_for_dine_in",
+        ),
+    ) as Promise<ProductUnitAvailabilityRow[] | null>,
     selectOrThrow(
       supabase
         .from("store_tables")
@@ -734,6 +810,13 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
     >,
   ]);
   const adminSettingsByUnitId = new Map((adminSettings ?? []).map((row) => [row.unit_id, row]));
+  const productAvailabilityByProductId = new Map<string, ProductUnitAvailabilityRow[]>();
+  for (const availability of productAvailability ?? []) {
+    productAvailabilityByProductId.set(availability.product_id, [
+      ...(productAvailabilityByProductId.get(availability.product_id) ?? []),
+      availability,
+    ]);
+  }
   const orderRows = (await selectOrThrow(
     supabase
       .from("orders")
@@ -799,7 +882,14 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
         units.map((unit) => unit.slug),
       ),
     ),
-    products: (products ?? []).map((product) => mapProduct(product, slugById)),
+    products: uniqueGlobalProducts(products ?? []).map((product) =>
+      mapProduct(
+        product,
+        slugById,
+        productAvailabilityByProductId.get(product.id),
+        units.map((unit) => unit.slug),
+      ),
+    ),
     tables: (tables ?? [])
       .map((table) => mapTable(table, slugById))
       .filter((table): table is RestaurantTable => Boolean(table)),
@@ -1125,9 +1215,11 @@ export async function setSupabaseCategoryActive(categoryId: string, active: bool
 export async function insertSupabaseProduct(unitId: UnitId, data: ProductDraft): Promise<Product> {
   assertConfigured();
   const supabase = getSupabaseClient();
-  const unitRow = (await selectOrThrow(
-    supabase.from("units").select("id, slug").eq("slug", unitId).single(),
-  )) as UnitRow;
+  const unitRows = (await selectOrThrow(
+    supabase.from("units").select("id, slug").eq("active", true).order("slug"),
+  )) as Array<Pick<UnitRow, "id" | "slug">>;
+  const unitRow = unitRows.find((unit) => unit.slug === unitId) ?? unitRows[0];
+  if (!unitRow) throw new Error("Nenhuma unidade ativa encontrada para criar produto.");
   const cleanName = data.name.trim();
   const { data: row, error } = await supabase
     .from("products")
@@ -1140,10 +1232,10 @@ export async function insertSupabaseProduct(unitId: UnitId, data: ProductDraft):
       price: data.price,
       image_url: data.imageUrl ?? null,
       option_groups: data.optionGroups ?? [],
-      available: data.active,
-      available_for_delivery: data.availableForDelivery ?? true,
-      available_for_pickup: data.availableForPickup ?? true,
-      available_for_dine_in: data.availableForDineIn ?? true,
+      available: true,
+      available_for_delivery: true,
+      available_for_pickup: true,
+      available_for_dine_in: true,
       dine_in_only: data.dineInOnly ?? false,
     })
     .select(
@@ -1151,7 +1243,24 @@ export async function insertSupabaseProduct(unitId: UnitId, data: ProductDraft):
     )
     .single();
   if (error) throw new Error(error.message);
-  return mapProduct(row as ProductRow, new Map([[unitRow.id, unitRow.slug]]));
+  const availabilityRows = unitRows.map((unit) => ({
+    product_id: row.id,
+    unit_id: unit.id,
+    is_available: data.active,
+    available_for_delivery: data.availableForDelivery ?? true,
+    available_for_pickup: data.availableForPickup ?? true,
+    available_for_dine_in: data.availableForDineIn ?? true,
+  }));
+  const { error: availabilityError } = await supabase
+    .from("product_unit_availability")
+    .upsert(availabilityRows, { onConflict: "product_id,unit_id" });
+  if (availabilityError) throw new Error(availabilityError.message);
+  return mapProduct(
+    row as ProductRow,
+    new Map(unitRows.map((unit) => [unit.id, unit.slug])),
+    availabilityRows,
+    unitRows.map((unit) => unit.slug),
+  );
 }
 
 export async function updateSupabaseProduct(productId: string, patch: Partial<Product>) {
@@ -1165,13 +1274,32 @@ export async function updateSupabaseProduct(productId: string, patch: Partial<Pr
       price: patch.price,
       image_url: patch.imageUrl,
       option_groups: patch.optionGroups,
-      available: patch.active,
-      available_for_delivery: patch.availableForDelivery,
-      available_for_pickup: patch.availableForPickup,
-      available_for_dine_in: patch.availableForDineIn,
       dine_in_only: patch.dineInOnly,
     })
     .eq("id", productId);
+  if (error) throw new Error(error.message);
+}
+
+export async function upsertSupabaseProductAvailability(
+  productId: string,
+  unitId: UnitId,
+  patch: Partial<Product>,
+) {
+  assertConfigured();
+  const unitRow = (await selectOrThrow(
+    getSupabaseClient().from("units").select("id").eq("slug", unitId).single(),
+  )) as Pick<UnitRow, "id">;
+  const payload = compactUpdate({
+    product_id: productId,
+    unit_id: unitRow.id,
+    is_available: patch.active,
+    available_for_delivery: patch.availableForDelivery,
+    available_for_pickup: patch.availableForPickup,
+    available_for_dine_in: patch.availableForDineIn,
+  });
+  const { error } = await getSupabaseClient()
+    .from("product_unit_availability")
+    .upsert(payload, { onConflict: "product_id,unit_id" });
   if (error) throw new Error(error.message);
 }
 
@@ -1187,13 +1315,12 @@ export async function deleteSupabaseProduct(productId: string) {
   if (error) throw new Error(error.message);
 }
 
-export async function setSupabaseProductAvailable(productId: string, available: boolean) {
-  assertConfigured();
-  const { error } = await getSupabaseClient()
-    .from("products")
-    .update({ available })
-    .eq("id", productId);
-  if (error) throw new Error(error.message);
+export async function setSupabaseProductAvailable(
+  productId: string,
+  unitId: UnitId,
+  available: boolean,
+) {
+  await upsertSupabaseProductAvailability(productId, unitId, { active: available });
 }
 
 export function normalizePublicAppUrl(value?: string | null) {

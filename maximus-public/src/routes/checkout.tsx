@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type HTMLAttributes } from "react";
+import { useEffect, useId, useMemo, useState, type HTMLAttributes } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Check, Copy, MapPin } from "lucide-react";
 import { toast } from "sonner";
@@ -68,14 +68,33 @@ type DeliveryQuote = {
 
 interface CheckoutSearch {
   mesa?: string;
+  table?: string;
   unidade?: string;
+  unit?: string;
+  mode?: string;
 }
 
 export const Route = createFileRoute("/checkout")({
-  validateSearch: (s: Record<string, unknown>): CheckoutSearch => ({
-    mesa: normalizeMesa(s.mesa),
-    unidade: typeof s.unidade === "string" ? s.unidade : undefined,
-  }),
+  validateSearch: (s: Record<string, unknown>): CheckoutSearch => {
+    const table = normalizeMesa(s.mesa ?? s.table ?? s.table_number);
+    const unit =
+      typeof s.unidade === "string"
+        ? s.unidade
+        : typeof s.unit === "string"
+          ? s.unit
+          : typeof s.unit_id === "string"
+            ? s.unit_id
+            : typeof s.unit_slug === "string"
+              ? s.unit_slug
+              : undefined;
+    return {
+      mesa: table,
+      table,
+      unidade: unit,
+      unit,
+      mode: typeof s.mode === "string" ? s.mode : undefined,
+    };
+  },
   head: () => ({
     meta: [
       { title: "Maximus" },
@@ -189,21 +208,38 @@ function normalizeTableNumber(value?: string) {
 }
 
 function CheckoutPage() {
-  const { mesa, unidade } = Route.useSearch();
+  const { mesa, table: tableParam, unidade, unit, mode } = Route.useSearch();
+  const searchTable = mesa ?? tableParam;
+  const searchUnit = unidade ?? unit;
+  const search = useMemo(
+    () => ({ unit: searchUnit, unidade: searchUnit, table: searchTable, mesa: searchTable, mode }),
+    [mode, searchTable, searchUnit],
+  );
   const navigate = useNavigate();
-  const { items, subtotal, count } = useCart();
+  const { items, subtotal, count, orderContext, setOrderContext } = useCart();
   const { placeOrder } = useOrder();
+  const isStoredQrContext = orderContext?.source === "qr" || orderContext?.mode === "dine_in";
+  const effectiveUnit = isStoredQrContext
+    ? (orderContext?.unit ?? searchUnit)
+    : (searchUnit ?? orderContext?.unit);
+  const effectiveTable = isStoredQrContext
+    ? (orderContext?.table ?? searchTable)
+    : (searchTable ?? orderContext?.table);
+  const effectiveMode = isStoredQrContext
+    ? (orderContext?.mode ?? mode)
+    : (mode ?? orderContext?.mode);
+  const isQrDineIn = effectiveMode === "dine_in" && Boolean(effectiveTable);
 
   const [step, setStep] = useState<Step>("mode");
-  const [consumeMode, setConsumeMode] = useState<ConsumeMode | null>(mesa ? "mesa" : null);
+  const [consumeMode, setConsumeMode] = useState<ConsumeMode | null>(null);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
-  const [table, setTable] = useState(mesa ? normalizeTableNumber(mesa) : "");
-  const selectedUnitSlug = unidade ?? "maximus-01";
+  const [table, setTable] = useState(effectiveTable ? normalizeTableNumber(effectiveTable) : "");
+  const selectedUnitSlug = effectiveUnit ?? "maximus-01";
   const [units, setUnits] = useState<GeoUnit[]>([]);
   const [unitTables, setUnitTables] = useState<PublicTable[]>([]);
-  const displayMesa = table || normalizeTableNumber(mesa);
+  const displayMesa = table || normalizeTableNumber(effectiveTable);
   const [address, setAddress] = useState(EMPTY_ADDRESS);
   const [currentCustomer, setCurrentCustomer] = useState<CustomerProfile | null>(null);
   const [hasSavedProfile, setHasSavedProfile] = useState(false);
@@ -233,6 +269,65 @@ function CheckoutPage() {
   const [changeFor, setChangeFor] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [privacyConsent, setPrivacyConsent] = useState(false);
+
+  useEffect(() => {
+    console.log("CHECKOUT QR FLAGS", {
+      mode,
+      mesa,
+      table: tableParam,
+      effectiveMode,
+      effectiveTable,
+      isQrDineIn,
+    });
+    console.log("CHECKOUT EFFECTIVE CONTEXT", {
+      arquivo: "maximus-public/src/routes/checkout.tsx",
+      search,
+      orderContext,
+      unit: effectiveUnit,
+      table: effectiveTable,
+      mesa: effectiveTable,
+      table_id: undefined,
+      table_number: effectiveTable,
+      mode: effectiveMode,
+      isQrDineIn,
+      step,
+      consumeMode,
+    });
+  }, [
+    consumeMode,
+    effectiveMode,
+    effectiveTable,
+    effectiveUnit,
+    isQrDineIn,
+    mesa,
+    mode,
+    orderContext,
+    search,
+    tableParam,
+    step,
+  ]);
+
+  useEffect(() => {
+    if (!isQrDineIn || !effectiveTable) return;
+    setOrderContext({
+      unit: effectiveUnit,
+      table: effectiveTable,
+      mode: "dine_in",
+      source: orderContext?.source ?? "qr",
+    });
+    setTable(normalizeTableNumber(effectiveTable));
+    if (consumeMode === "delivery" || consumeMode === "local" || consumeMode === "balcao") {
+      setConsumeMode(null);
+      setStep("mode");
+    }
+  }, [
+    consumeMode,
+    effectiveTable,
+    effectiveUnit,
+    isQrDineIn,
+    orderContext?.source,
+    setOrderContext,
+  ]);
 
   useEffect(() => {
     const localProfile = getSavedCustomerProfile();
@@ -266,13 +361,15 @@ function CheckoutPage() {
   }, []);
 
   useEffect(() => {
-    loadPublicMenu(selectedUnitSlug, Boolean(mesa))
+    loadPublicMenu(selectedUnitSlug, isQrDineIn ? "dine_in" : "delivery")
       .then((data) => {
         setUnits(data.units);
         setDeliveryUnit(
           (prev) =>
             prev ??
-            data.units.find((unit) => unit.slug === selectedUnitSlug) ??
+            data.units.find(
+              (unit) => unit.slug === selectedUnitSlug || unit.id === selectedUnitSlug,
+            ) ??
             data.units[0] ??
             null,
         );
@@ -281,7 +378,7 @@ function CheckoutPage() {
     loadPublicTables(selectedUnitSlug)
       .then(setUnitTables)
       .catch(() => setUnitTables([]));
-  }, [mesa, selectedUnitSlug]);
+  }, [isQrDineIn, selectedUnitSlug]);
 
   useEffect(() => {
     if (!deliveryUnit?.id) {
@@ -319,23 +416,58 @@ function CheckoutPage() {
 
   const isAddressComplete =
     Boolean(address.rua.trim()) && Boolean(address.numero.trim()) && Boolean(address.bairro.trim());
+  const allUnitsClosed = units.length > 0 && units.every((unit) => !unit.isOpen);
 
   if (items.length === 0) {
     return (
       <div className="min-h-screen">
-        <SiteHeader mesa={mesa} unidade={unidade} />
+        <SiteHeader
+          mesa={effectiveTable}
+          unidade={effectiveUnit}
+          mode={isQrDineIn ? "dine_in" : undefined}
+        />
         <CheckoutShell title="Meu pedido está vazio">
           <Button
             className="w-full bg-gradient-primary font-bold"
             onClick={() =>
               navigate({
                 to: "/menu",
-                search: { ...(unidade ? { unidade } : {}), ...(mesa ? { mesa } : {}) },
+                search: {
+                  ...(effectiveUnit ? { unidade: effectiveUnit } : {}),
+                  ...(effectiveTable ? { mesa: effectiveTable } : {}),
+                  ...(isQrDineIn ? { mode: "dine_in" } : {}),
+                },
               })
             }
           >
             Voltar ao cardápio
           </Button>
+        </CheckoutShell>
+      </div>
+    );
+  }
+
+  if (allUnitsClosed) {
+    return (
+      <div className="min-h-screen">
+        <SiteHeader
+          mesa={effectiveTable}
+          unidade={effectiveUnit}
+          mode={isQrDineIn ? "dine_in" : undefined}
+        />
+        <CheckoutShell title="Estamos fechados agora">
+          <div className="space-y-4">
+            <p className="rounded-2xl border border-primary/30 bg-primary/10 p-4 text-sm font-semibold text-muted-foreground">
+              O checkout está indisponível porque todas as unidades estão fechadas no momento.
+              Consulte a página Onde estamos para ver endereços e horários.
+            </p>
+            <Button
+              className="w-full bg-gradient-primary font-bold"
+              onClick={() => navigate({ to: "/onde-estamos" })}
+            >
+              Ver unidades e horários
+            </Button>
+          </div>
         </CheckoutShell>
       </div>
     );
@@ -426,6 +558,16 @@ function CheckoutPage() {
     },
   ) {
     if (submitting) return;
+    if (units.length > 0 && units.every((unit) => !unit.isOpen)) {
+      toast.error("Todas as unidades estão fechadas no momento.");
+      return;
+    }
+    if (isQrDineIn && mode === "delivery") {
+      toast.error("Delivery não está disponível para pedidos iniciados por QR de mesa.");
+      setConsumeMode(null);
+      setStep("mode");
+      return;
+    }
     setSubmitting(true);
     let resolvedDelivery: ResolvedDelivery | null = null;
     if (mode === "delivery") {
@@ -450,7 +592,9 @@ function CheckoutPage() {
     const unit =
       mode === "delivery"
         ? resolvedDelivery?.unit
-        : (units.find((item) => item.slug === selectedUnitSlug) ?? units[0] ?? deliveryUnit);
+        : (units.find((item) => item.slug === selectedUnitSlug || item.id === selectedUnitSlug) ??
+          units[0] ??
+          deliveryUnit);
     const customer = await persistCustomer();
     let usedAddress: CustomerAddress | undefined;
     let tableId: string | null = null;
@@ -479,6 +623,11 @@ function CheckoutPage() {
     }
     if (!unit) {
       toast.error("Não foi possível identificar a unidade do pedido.");
+      setSubmitting(false);
+      return;
+    }
+    if (!unit.isOpen) {
+      toast.error("A unidade selecionada está fechada no momento.");
       setSubmitting(false);
       return;
     }
@@ -831,9 +980,11 @@ function CheckoutPage() {
     if (deliveryLocation) return deliveryUnit;
     return (
       (deliveryUnit?.isOpen ? deliveryUnit : null) ??
-      units.find((item) => item.slug === selectedUnitSlug && item.isOpen) ??
+      units.find(
+        (item) => (item.slug === selectedUnitSlug || item.id === selectedUnitSlug) && item.isOpen,
+      ) ??
       units.find((item) => item.isOpen) ??
-      units.find((item) => item.slug === selectedUnitSlug) ??
+      units.find((item) => item.slug === selectedUnitSlug || item.id === selectedUnitSlug) ??
       units[0] ??
       null
     );
@@ -854,7 +1005,7 @@ function CheckoutPage() {
   }
 
   const currentOrderMode: OrderTrackMode =
-    consumeMode === "delivery"
+    consumeMode === "delivery" && !isQrDineIn
       ? "delivery"
       : consumeMode === "mesa" || consumeMode === "local"
         ? "mesa"
@@ -888,7 +1039,11 @@ function CheckoutPage() {
 
   return (
     <div className="min-h-screen">
-      <SiteHeader mesa={mesa} unidade={unidade} />
+      <SiteHeader
+        mesa={effectiveTable}
+        unidade={effectiveUnit}
+        mode={isQrDineIn ? "dine_in" : undefined}
+      />
       <div className="mx-auto max-w-lg px-4 pt-6">
         <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 text-sm">
           <span className="text-muted-foreground">
@@ -903,17 +1058,20 @@ function CheckoutPage() {
         <CheckoutShell
           title="Como você quer receber seu pedido?"
           subtitle={
-            mesa ? `Pedido da Mesa ${mesa}` : "Revise se está tudo certo antes de continuar."
+            isQrDineIn && effectiveTable
+              ? `Pedido da Mesa ${normalizeTableNumber(effectiveTable)}`
+              : "Revise se está tudo certo antes de continuar."
           }
         >
           <div className="space-y-3">
-            {mesa ? (
+            {isQrDineIn && effectiveTable ? (
               <>
                 <BigOption
                   label={`Comer na Mesa ${displayMesa}`}
                   description="Será servido diretamente na sua mesa."
                   onClick={() => {
                     setConsumeMode("mesa");
+                    setTable(normalizeTableNumber(effectiveTable));
                     setStep("mesaConfirm");
                   }}
                 />

@@ -30,11 +30,27 @@ import type { CartItem, SelectedOptions } from "@/lib/types";
 export function CartDrawer({
   checkoutSearch,
 }: {
-  checkoutSearch?: { mesa?: string; unidade?: string };
+  checkoutSearch?: {
+    mesa?: string;
+    table?: string;
+    unidade?: string;
+    unit?: string;
+    mode?: string;
+  };
 }) {
-  const { items, inc, dec, removeItem, subtotal, count } = useCart();
+  const { items, inc, dec, removeItem, subtotal, count, orderContext } = useCart();
   const [open, setOpen] = useState(false);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const effectiveCheckoutSearch = useMemo(() => {
+    const unit = checkoutSearch?.unidade ?? checkoutSearch?.unit ?? orderContext?.unit;
+    const table = checkoutSearch?.mesa ?? checkoutSearch?.table ?? orderContext?.table;
+    const mode = table ? "dine_in" : (checkoutSearch?.mode ?? orderContext?.mode);
+    return {
+      ...(unit ? { unidade: unit, unit } : {}),
+      ...(table ? { mesa: table, table } : {}),
+      ...(mode ? { mode } : {}),
+    };
+  }, [checkoutSearch, orderContext]);
 
   useEffect(() => {
     function openCart() {
@@ -155,9 +171,15 @@ export function CartDrawer({
               <Button disabled className="w-full bg-gradient-primary font-bold" size="lg">
                 Finalizar pedido
               </Button>
+            ) : effectiveCheckoutSearch.mesa || effectiveCheckoutSearch.table ? (
+              <Button asChild className="w-full bg-gradient-primary font-bold" size="lg">
+                <Link to="/checkout-mesa" search={effectiveCheckoutSearch}>
+                  Finalizar pedido
+                </Link>
+              </Button>
             ) : (
               <Button asChild className="w-full bg-gradient-primary font-bold" size="lg">
-                <Link to="/checkout" search={checkoutSearch ?? {}}>
+                <Link to="/checkout" search={effectiveCheckoutSearch}>
                   Finalizar pedido
                 </Link>
               </Button>
@@ -165,7 +187,7 @@ export function CartDrawer({
           </div>
         </SheetFooter>
       </SheetContent>
-      {count > 0 && pathname === "/menu" && (
+      {count > 0 && (pathname === "/menu" || pathname === "/mesa") && (
         <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:hidden">
           <Button
             type="button"

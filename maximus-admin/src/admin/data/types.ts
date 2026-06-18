@@ -128,6 +128,7 @@ export interface Product {
   price: number;
   active: boolean;
   unitIds?: UnitId[];
+  activeByUnit?: Record<UnitId, boolean>;
   description?: string;
   imageUrl?: string;
   optionGroups?: ProductOptionGroup[];

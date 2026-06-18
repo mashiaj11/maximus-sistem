@@ -1,23 +1,45 @@
-import { useEffect, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
-import { ArrowLeft, Info } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ArrowLeft, Info, MapPin } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { FoodArt } from "@/components/FoodArt";
 import { ProductCard } from "@/components/ProductCard";
 import type { Category, CategoryId, Product } from "@/lib/types";
 import { loadPublicMenu } from "@/lib/supabase-data";
+import { useCart } from "@/lib/store";
 import { cn, normalizeMesa } from "@/lib/utils";
+import type { GeoUnit } from "@/lib/geo";
+import { formatBusinessHours } from "@/lib/business-hours";
 
 interface MenuSearch {
   mesa?: string;
+  table?: string;
   unidade?: string;
+  unit?: string;
+  mode?: string;
 }
 
 export const Route = createFileRoute("/menu")({
-  validateSearch: (search: Record<string, unknown>): MenuSearch => ({
-    mesa: normalizeMesa(search.mesa),
-    unidade: typeof search.unidade === "string" ? search.unidade : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): MenuSearch => {
+    const table = normalizeMesa(search.mesa ?? search.table ?? search.table_number);
+    const unit =
+      typeof search.unidade === "string"
+        ? search.unidade
+        : typeof search.unit === "string"
+          ? search.unit
+          : typeof search.unit_id === "string"
+            ? search.unit_id
+            : typeof search.unit_slug === "string"
+              ? search.unit_slug
+              : undefined;
+    return {
+      mesa: table,
+      table,
+      unidade: unit,
+      unit,
+      mode: typeof search.mode === "string" ? search.mode : undefined,
+    };
+  },
   head: () => ({
     meta: [
       { title: "Cardápio — Maximus" },
@@ -31,19 +53,69 @@ export const Route = createFileRoute("/menu")({
 });
 
 function MenuPage() {
-  const { mesa, unidade } = Route.useSearch();
+  const { mesa, table, unidade, unit, mode } = Route.useSearch();
+  const navigate = useNavigate();
+  const qrTable = mesa ?? table;
+  const qrUnit = unidade ?? unit;
+  const search = useMemo(
+    () => ({ unit: qrUnit, unidade: qrUnit, table: qrTable, mesa: qrTable, mode }),
+    [mode, qrTable, qrUnit],
+  );
+  const { orderContext, setOrderContext } = useCart();
+  const effectiveMesa = qrTable ?? orderContext?.table;
+  const effectiveUnidade = qrUnit ?? orderContext?.unit;
+  const effectiveMode = mode ?? orderContext?.mode;
+  const effectiveIsDineIn = effectiveMode === "dine_in" || Boolean(effectiveMesa);
   const [active, setActive] = useState<CategoryId | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [units, setUnits] = useState<GeoUnit[]>([]);
+  const [allUnitsClosed, setAllUnitsClosed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    console.log("MENU QR CONTEXT", {
+      arquivo: "maximus-public/src/routes/menu.tsx",
+      search,
+      unit: effectiveUnidade,
+      table: effectiveMesa,
+      mode: effectiveMode,
+      orderContext,
+    });
+  }, [effectiveMesa, effectiveMode, effectiveUnidade, orderContext, search]);
+
+  useEffect(() => {
+    if (mode !== "dine_in" || !qrTable) return;
+    setOrderContext({
+      unit: qrUnit,
+      table: qrTable,
+      mode: "dine_in",
+      source: "qr",
+    });
+    if (!qrUnit) return;
+    if (unit === qrUnit && unidade === qrUnit && table === qrTable && mesa === qrTable) return;
+    void navigate({
+      to: "/menu",
+      search: {
+        unit: qrUnit,
+        unidade: qrUnit,
+        table: qrTable,
+        mesa: qrTable,
+        mode: "dine_in",
+      },
+      replace: true,
+    });
+  }, [mesa, mode, navigate, qrTable, qrUnit, setOrderContext, table, unidade, unit]);
+
+  useEffect(() => {
     setLoading(true);
-    loadPublicMenu(unidade, Boolean(mesa))
+    loadPublicMenu(effectiveUnidade, effectiveIsDineIn ? "dine_in" : "delivery")
       .then((data) => {
         setCategories(data.categories);
         setProducts(data.products);
+        setUnits(data.units);
+        setAllUnitsClosed(data.allUnitsClosed);
         setError(null);
       })
       .catch((loadError) => {
@@ -52,26 +124,67 @@ function MenuPage() {
         );
       })
       .finally(() => setLoading(false));
-  }, [mesa, unidade]);
+  }, [effectiveIsDineIn, effectiveUnidade]);
 
   const selectedCategory = categories.find((c) => c.id === active);
   const list = active ? products.filter((p) => p.category === active) : [];
 
   return (
     <div className="min-h-screen pb-16">
-      <SiteHeader mesa={mesa} unidade={unidade} />
+      <SiteHeader
+        mesa={effectiveMesa}
+        unidade={effectiveUnidade}
+        mode={effectiveIsDineIn ? "dine_in" : undefined}
+      />
 
-      {mesa && (
+      {effectiveIsDineIn && effectiveMesa && (
         <div className="bg-primary/10 border-b border-primary/30">
           <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-2 text-sm font-medium text-primary">
             <Info className="h-4 w-4" />
-            Origem: loja física • Mesa {mesa}
+            Origem: loja física • Mesa {effectiveMesa}
           </div>
         </div>
       )}
 
       <div className="mx-auto max-w-6xl px-4 py-8">
-        {!active ? (
+        {allUnitsClosed ? (
+          <div className="space-y-5">
+            <div className="rounded-lg border border-primary/30 bg-primary/10 p-5">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">
+                Estamos fechados agora
+              </p>
+              <h1 className="mt-2 text-2xl font-extrabold tracking-tight">
+                Cardápio indisponível
+              </h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Confira endereços, horários cadastrados e status das unidades.
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              {units.map((unit) => (
+                <article key={unit.id} className="rounded-lg border border-border bg-card p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-black">{unit.name}</h2>
+                      <p className="mt-2 flex gap-2 text-sm text-muted-foreground">
+                        <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+                        {unit.address}
+                      </p>
+                    </div>
+                    <span className="rounded-md bg-secondary px-2 py-1 text-xs font-bold text-muted-foreground">
+                      {unit.isOpen ? "Aberta" : "Fechada"}
+                    </span>
+                  </div>
+                  <div className="mt-4 space-y-1 text-xs font-semibold text-muted-foreground">
+                    {formatBusinessHours(unit.businessHours).map((line) => (
+                      <p key={line}>{line}</p>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        ) : !active ? (
           <>
             <div className="mb-6">
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">

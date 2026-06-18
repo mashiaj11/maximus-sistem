@@ -12,9 +12,24 @@ import type {
   Product,
   ProductOptionGroup,
 } from "./types";
-import type { GeoUnit } from "./geo";
+import type { GeoUnit, PublicBusinessHour, WeekdayKey } from "./geo";
 
 type AvailabilityScope = "all" | "dine_in_only" | "delivery_only" | "takeaway_only";
+export type PublicConsumptionMode = "delivery" | "pickup" | "dine_in";
+type OrderWhatsappStatus =
+  | "received"
+  | "accepted"
+  | "in_preparation"
+  | "ready"
+  | "ready_for_pickup"
+  | "out_for_delivery"
+  | "driver_on_way"
+  | "driver_nearby"
+  | "arrived"
+  | "delivered"
+  | "picked_up"
+  | "delivered_to_table"
+  | "cancelled";
 
 type UnitRow = {
   id: string;
@@ -26,6 +41,7 @@ type UnitRow = {
   longitude: number | null;
   is_open: boolean;
   business_hours?: unknown;
+  active?: boolean | null;
 };
 
 type AdminSettingsRow = {
@@ -58,6 +74,21 @@ type ProductRow = {
   image_url: string | null;
   option_groups: unknown;
   available: boolean;
+  available_for_delivery?: boolean | null;
+  available_for_pickup?: boolean | null;
+  available_for_dine_in?: boolean | null;
+  dine_in_only?: boolean | null;
+  deleted_at?: string | null;
+  created_at?: string | null;
+};
+
+type ProductUnitAvailabilityRow = {
+  product_id: string;
+  unit_id: string;
+  is_available: boolean;
+  available_for_delivery?: boolean | null;
+  available_for_pickup?: boolean | null;
+  available_for_dine_in?: boolean | null;
 };
 
 type StoreTableRow = {
@@ -156,6 +187,7 @@ export type PublicMenuData = {
   units: GeoUnit[];
   categories: Category[];
   products: Product[];
+  allUnitsClosed: boolean;
 };
 
 const CURRENT_CUSTOMER_PHONE_KEY = "maximus_current_customer_phone";
@@ -183,16 +215,27 @@ function slugToVariant(slug: string): FoodVariant {
   return "burger";
 }
 
-function tableModeFromSearch(hasTable: boolean): "dine_in" | "delivery_takeaway" {
-  return hasTable ? "dine_in" : "delivery_takeaway";
+function scopeAllowed(scope: AvailabilityScope, mode: PublicConsumptionMode) {
+  if (scope === "all") return true;
+  if (scope === "dine_in_only") return mode === "dine_in";
+  if (scope === "delivery_only") return mode === "delivery";
+  if (scope === "takeaway_only") return mode === "pickup";
+  return false;
 }
 
-function scopeAllowed(scope: AvailabilityScope, hasTable: boolean) {
-  if (scope === "all") return true;
-  if (scope === "dine_in_only") return hasTable;
-  if (scope === "delivery_only") return !hasTable;
-  if (scope === "takeaway_only") return !hasTable;
-  return false;
+function productAllowed(
+  product: ProductRow,
+  mode: PublicConsumptionMode,
+  availability?: ProductUnitAvailabilityRow,
+) {
+  if (product.dine_in_only) return mode === "dine_in";
+  if (mode === "dine_in") {
+    return (availability?.available_for_dine_in ?? product.available_for_dine_in) !== false;
+  }
+  if (mode === "pickup") {
+    return (availability?.available_for_pickup ?? product.available_for_pickup) !== false;
+  }
+  return (availability?.available_for_delivery ?? product.available_for_delivery) !== false;
 }
 
 function mapOptionGroups(value: unknown): ProductOptionGroup[] {
@@ -298,17 +341,49 @@ function mapPublicUnit(unit: UnitRow, settings?: AdminSettingsRow): GeoUnit {
     id: unit.id,
     slug: unit.slug,
     name: unit.name,
+    address: unit.address ?? "",
     phone,
     whatsappPhone: settings?.whatsapp_number ?? phone,
     latitude: Number(unit.latitude ?? 0),
     longitude: Number(unit.longitude ?? 0),
     isOpen: unit.is_open && isOpenByBusinessHours(unit.business_hours),
+    businessHours: normalizeBusinessHours(unit.business_hours),
     minimumOrderValue: Number(settings?.minimum_order_value ?? 0),
     baseDeliveryFee: Number(settings?.base_delivery_fee ?? 0),
     deliveryFeePerKm: Number(settings?.delivery_fee_per_km ?? 0),
     maxDeliveryDistanceKm: Number(settings?.max_delivery_distance_km ?? 0),
     freeDeliveryFrom: Number(settings?.free_delivery_from ?? 0),
   };
+}
+
+function normalizeBusinessHours(value: unknown): PublicBusinessHour[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const row = item as {
+        day?: WeekdayKey;
+        open?: boolean;
+        periods?: Array<{ opensAt?: string; closesAt?: string }>;
+        opensAt?: string;
+        closesAt?: string;
+      };
+      if (!row.day) return null;
+      const periods =
+        Array.isArray(row.periods) && row.periods.length
+          ? row.periods
+          : row.opensAt && row.closesAt
+            ? [{ opensAt: row.opensAt, closesAt: row.closesAt }]
+            : [];
+      return {
+        day: row.day,
+        open: Boolean(row.open),
+        periods: periods.map((period) => ({
+          opensAt: period.opensAt ?? "",
+          closesAt: period.closesAt ?? "",
+        })),
+      };
+    })
+    .filter((hour): hour is PublicBusinessHour => Boolean(hour));
 }
 
 function isOpenByBusinessHours(value: unknown) {
@@ -356,6 +431,19 @@ async function queryOrThrow<T>(
   const { data, error } = await promise;
   if (error) throw new Error(`${label}: ${error.message}`);
   return data;
+}
+
+async function loadPublicUnitRows(label: string) {
+  const { data, error } = await getSupabaseClient()
+    .from("units")
+    .select("id, slug, name, phone, address, latitude, longitude, is_open, business_hours, active")
+    .eq("active", true)
+    .order("slug");
+
+  console.log("PUBLIC UNITS RAW", data, error);
+
+  if (error) throw new Error(`${label}: ${error.message}`);
+  return (data ?? []) as UnitRow[];
 }
 
 export function rememberCustomerPhone(phone: string) {
@@ -422,18 +510,10 @@ export function clearRememberedLastOrderId() {
 }
 
 export async function loadPublicUnits() {
-  const supabase = getSupabaseClient();
-  const rows = (await queryOrThrow(
-    "units",
-    supabase
-      .from("units")
-      .select("id, slug, name, phone, address, latitude, longitude, is_open, business_hours")
-      .eq("active", true)
-      .order("slug"),
-  )) as UnitRow[];
+  const rows = await loadPublicUnitRows("units");
   const settings = (await queryOrThrow(
     "admin_settings",
-    supabase
+    getSupabaseClient()
       .from("admin_settings")
       .select(
         "unit_id, official_phone, whatsapp_number, minimum_order_value, base_delivery_fee, delivery_fee_per_km, max_delivery_distance_km, free_delivery_from",
@@ -443,21 +523,44 @@ export async function loadPublicUnits() {
 
   return rows.map((unit) => ({
     ...mapPublicUnit(unit, settingsMap.get(unit.id)),
-    id: unit.slug,
-    address: unit.address ?? "",
   }));
 }
 
-export async function loadPublicMenu(unitSlug?: string, hasTable = false): Promise<PublicMenuData> {
+function productGlobalKey(product: ProductRow) {
+  return [
+    product.category_id,
+    product.name.trim().toLowerCase(),
+    Number(product.price).toFixed(2),
+    product.description ?? "",
+    product.image_url ?? "",
+    JSON.stringify(product.option_groups ?? []),
+  ].join("|");
+}
+
+function uniqueGlobalProducts(products: ProductRow[]) {
+  const byKey = new Map<string, ProductRow>();
+  for (const product of products) {
+    const key = productGlobalKey(product);
+    const current = byKey.get(key);
+    const productTime = product.created_at ? new Date(product.created_at).getTime() : 0;
+    const currentTime = current?.created_at ? new Date(current.created_at).getTime() : 0;
+    if (
+      !current ||
+      productTime < currentTime ||
+      (productTime === currentTime && product.id.localeCompare(current.id) < 0)
+    ) {
+      byKey.set(key, product);
+    }
+  }
+  return [...byKey.values()];
+}
+
+export async function loadPublicMenu(
+  unitSlug?: string,
+  mode: PublicConsumptionMode = "delivery",
+): Promise<PublicMenuData> {
   const supabase = getSupabaseClient();
-  const units = (await queryOrThrow(
-    "units",
-    supabase
-      .from("units")
-      .select("id, slug, name, phone, address, latitude, longitude, is_open, business_hours")
-      .eq("active", true)
-      .order("slug"),
-  )) as UnitRow[];
+  const unitRows = await loadPublicUnitRows("units");
   const adminSettings = (await queryOrThrow(
     "admin_settings",
     supabase
@@ -467,7 +570,15 @@ export async function loadPublicMenu(unitSlug?: string, hasTable = false): Promi
       ),
   )) as AdminSettingsRow[];
   const unitSettings = settingsByUnitId(adminSettings);
-  const selectedUnit = units.find((unit) => unit.slug === unitSlug) ?? units[0];
+  const units = unitRows.map((unit) => mapPublicUnit(unit, unitSettings.get(unit.id)));
+  const openUnits = units.filter((unit) => unit.isOpen);
+  const requestedUnit = units.find((unit) => unit.slug === unitSlug || unit.id === unitSlug);
+  const selectedUnit =
+    (requestedUnit?.isOpen ? requestedUnit : null) ??
+    openUnits[0] ??
+    requestedUnit ??
+    units[0];
+  const allUnitsClosed = openUnits.length === 0;
   const categories = (await queryOrThrow(
     "categories",
     supabase
@@ -476,57 +587,107 @@ export async function loadPublicMenu(unitSlug?: string, hasTable = false): Promi
       .eq("active", true)
       .order("sort_order"),
   )) as CategoryRow[];
+  console.log("PUBLIC CATEGORIES RAW", categories);
   const allowedCategories = categories.filter((category) =>
-    scopeAllowed(category.availability_scope, hasTable),
+    scopeAllowed(category.availability_scope, mode),
   );
-  const products = selectedUnit
+  const productRows = selectedUnit && !allUnitsClosed
     ? ((await queryOrThrow(
         "products",
         supabase
           .from("products")
           .select(
-            "id, unit_id, category_id, name, description, price, image_url, option_groups, available",
+            "id, unit_id, category_id, name, description, price, image_url, option_groups, available, available_for_delivery, available_for_pickup, available_for_dine_in, dine_in_only, deleted_at, created_at",
           )
-          .eq("unit_id", selectedUnit.id)
           .eq("available", true)
+          .is("deleted_at", null)
           .order("name"),
       )) as ProductRow[])
     : [];
+  const globalProducts = uniqueGlobalProducts(productRows);
+  const availabilityRows =
+    selectedUnit && globalProducts.length
+      ? ((await queryOrThrow(
+          "product_unit_availability",
+          supabase
+            .from("product_unit_availability")
+            .select(
+              "product_id, unit_id, is_available, available_for_delivery, available_for_pickup, available_for_dine_in",
+            )
+            .eq("unit_id", selectedUnit.id)
+            .in(
+              "product_id",
+              globalProducts.map((product) => product.id),
+            ),
+        )) as ProductUnitAvailabilityRow[])
+      : [];
+  const availabilityByProductId = new Map(
+    availabilityRows.map((row) => [row.product_id, row]),
+  );
   const categoryById = new Map(categories.map((category) => [category.id, category]));
   const allowedIds = new Set(allowedCategories.map((category) => category.id));
+  console.log("PUBLIC PRODUCTS RAW", productRows);
+  const filteredProducts = globalProducts
+    .filter((product) => allowedIds.has(product.category_id))
+    .filter((product) => {
+      const availability = availabilityByProductId.get(product.id);
+      if (availability) return availability.is_available;
+      return product.available;
+    })
+    .filter((product) => productAllowed(product, mode, availabilityByProductId.get(product.id)));
+  console.log("PUBLIC PRODUCTS FILTERED", filteredProducts);
+  for (const category of allowedCategories) {
+    const categoryProducts = filteredProducts.filter(
+      (product) => product.category_id === category.id,
+    );
+    console.log("CATEGORY PRODUCTS", category.id, categoryProducts);
+  }
 
   return {
-    units: units.map((unit) => mapPublicUnit(unit, unitSettings.get(unit.id))),
-    categories: allowedCategories.map((category) => ({
-      id: category.id,
-      label: category.name,
-      svg: slugToVariant(category.slug),
-      availabilityScope: category.availability_scope,
-    })),
-    products: products
-      .filter((product) => allowedIds.has(product.category_id))
-      .map((product) => {
-        const category = categoryById.get(product.category_id);
-        return {
-          id: product.id,
-          name: product.name,
-          description: product.description ?? "",
-          price: Number(product.price),
-          category: product.category_id,
-          svg: slugToVariant(category?.slug ?? ""),
-          imageUrl: product.image_url ?? undefined,
-          optionGroups: mapOptionGroups(product.option_groups),
-        };
-      }),
+    units,
+    allUnitsClosed,
+    categories: allUnitsClosed
+      ? []
+      : allowedCategories.map((category) => ({
+          id: category.id,
+          label: category.name,
+          svg: slugToVariant(category.slug),
+          availabilityScope: category.availability_scope,
+        })),
+    products: filteredProducts.map((product) => {
+      const category = categoryById.get(product.category_id);
+      return {
+        id: product.id,
+        name: product.name,
+        description: product.description ?? "",
+        price: Number(product.price),
+        category: product.category_id,
+        svg: slugToVariant(category?.slug ?? ""),
+        imageUrl: product.image_url ?? undefined,
+        optionGroups: mapOptionGroups(product.option_groups),
+        availableForDelivery:
+          (availabilityByProductId.get(product.id)?.available_for_delivery ??
+            product.available_for_delivery) !== false,
+        availableForPickup:
+          (availabilityByProductId.get(product.id)?.available_for_pickup ??
+            product.available_for_pickup) !== false,
+        availableForDineIn:
+          (availabilityByProductId.get(product.id)?.available_for_dine_in ??
+            product.available_for_dine_in) !== false,
+        dineInOnly: product.dine_in_only === true,
+      };
+    }),
   };
 }
 
 export async function loadPublicTables(unitSlug: string): Promise<PublicTable[]> {
   const supabase = getSupabaseClient();
-  const unit = (await queryOrThrow(
-    "unit",
-    supabase.from("units").select("id, slug").eq("slug", unitSlug).single(),
-  )) as Pick<UnitRow, "id" | "slug">;
+  const units = (await queryOrThrow(
+    "units",
+    supabase.from("units").select("id, slug").eq("is_open", true),
+  )) as Array<Pick<UnitRow, "id" | "slug">>;
+  const unit = units.find((item) => item.slug === unitSlug || item.id === unitSlug);
+  if (!unit) return [];
   const rows = (await queryOrThrow(
     "store_tables",
     supabase
@@ -547,10 +708,12 @@ export async function loadPublicTables(unitSlug: string): Promise<PublicTable[]>
 
 export async function findPublicTable(unitSlug: string, tableNumber: string) {
   const supabase = getSupabaseClient();
-  const unit = (await queryOrThrow(
-    "unit",
-    supabase.from("units").select("id, slug").eq("slug", unitSlug).single(),
-  )) as Pick<UnitRow, "id" | "slug">;
+  const units = (await queryOrThrow(
+    "units",
+    supabase.from("units").select("id, slug").eq("is_open", true),
+  )) as Array<Pick<UnitRow, "id" | "slug">>;
+  const unit = units.find((item) => item.slug === unitSlug || item.id === unitSlug);
+  if (!unit) return null;
   const number = Number(tableNumber);
   if (!Number.isFinite(number)) return null;
   const rows = (await queryOrThrow(
@@ -832,6 +995,13 @@ function paymentMethodForOrder(method?: OrderInfo["paymentMethod"]) {
   return method ?? "pix_app";
 }
 
+async function invokeOrderWhatsAppNotification(orderId: string, status: OrderWhatsappStatus) {
+  const { error } = await getSupabaseClient().functions.invoke("send-order-whatsapp", {
+    body: { orderId, status },
+  });
+  if (error) throw new Error(error.message);
+}
+
 export async function createOrderInSupabase(params: {
   order: Omit<OrderInfo, "id" | "createdAt">;
   cartItems: CartItem[];
@@ -848,6 +1018,18 @@ export async function createOrderInSupabase(params: {
   }
 
   const supabase = getSupabaseClient();
+  const unitRows = (await queryOrThrow(
+    "order unit",
+    supabase
+      .from("units")
+      .select("id, is_open, business_hours")
+      .eq("id", params.unitId)
+      .limit(1),
+  )) as Array<Pick<UnitRow, "id" | "is_open" | "business_hours">>;
+  const unit = unitRows[0];
+  if (!unit || !unit.is_open || !isOpenByBusinessHours(unit.business_hours)) {
+    throw new Error("A unidade selecionada está fechada no momento.");
+  }
   const orderNumber = Math.floor(Date.now() % 1000000000);
   const subtotal = params.cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const deliveryFee = params.deliveryFee ?? 0;
@@ -931,6 +1113,12 @@ export async function createOrderInSupabase(params: {
       confirmed_at: paymentStatus === "confirmed" ? new Date().toISOString() : null,
     }),
   );
+
+  try {
+    await invokeOrderWhatsAppNotification(order.id, "received");
+  } catch (error) {
+    console.error("[Maximus][WhatsApp] Falha ao notificar pedido recebido", error);
+  }
 
   rememberLastOrderId(order.id);
 

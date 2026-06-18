@@ -37,6 +37,10 @@ export interface Product {
   imageUrl?: string;
   image_url?: string;
   optionGroups?: ProductOptionGroup[];
+  availableForDelivery?: boolean;
+  availableForPickup?: boolean;
+  availableForDineIn?: boolean;
+  dineInOnly?: boolean;
 }
 
 export type CategoryId = string;

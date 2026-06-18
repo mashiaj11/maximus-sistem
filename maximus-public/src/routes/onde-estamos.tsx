@@ -5,6 +5,7 @@ import { SiteHeader } from "@/components/SiteHeader";
 import { Button } from "@/components/ui/button";
 import { getDistanceKm, type GeoUnit } from "@/lib/geo";
 import { loadPublicUnits } from "@/lib/supabase-data";
+import { formatBusinessHours } from "@/lib/business-hours";
 
 export const Route = createFileRoute("/onde-estamos")({
   head: () => ({
@@ -29,6 +30,10 @@ function WherePage() {
   }, []);
 
   function useLocation() {
+    if (!window.isSecureContext) {
+      setLocationStatus("Para usar sua localização, acesse o sistema por uma conexão HTTPS.");
+      return;
+    }
     if (!navigator.geolocation) {
       setLocationStatus("Seu navegador não oferece localização.");
       return;
@@ -54,7 +59,7 @@ function WherePage() {
             : "Não encontramos unidade próxima.",
         );
       },
-      () => setLocationStatus("Permissão negada ou não foi possível obter sua localização."),
+      (error) => setLocationStatus(geolocationErrorMessage(error)),
       { enableHighAccuracy: true, timeout: 10000 },
     );
   }
@@ -94,6 +99,12 @@ function WherePage() {
           </p>
         )}
 
+        {!loadingUnits && units.length > 0 && units.every((unit) => !unit.isOpen) && (
+          <p className="mt-6 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm font-semibold text-muted-foreground">
+            Estamos fechados agora. Confira os horários cadastrados abaixo.
+          </p>
+        )}
+
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           {units.map((unit) => (
             <article
@@ -111,10 +122,26 @@ function WherePage() {
                   </p>
                   <h2 className="mt-2 text-2xl font-black">{unit.name}</h2>
                 </div>
-                <Clock className="h-5 w-5 text-muted-foreground" />
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-md px-2 py-1 text-xs font-bold ${
+                      unit.isOpen
+                        ? "bg-emerald-500/15 text-emerald-500"
+                        : "bg-secondary text-muted-foreground"
+                    }`}
+                  >
+                    {unit.isOpen ? "Aberta" : "Fechada"}
+                  </span>
+                  <Clock className="h-5 w-5 text-muted-foreground" />
+                </div>
               </div>
               <p className="mt-3 text-sm text-muted-foreground">{unit.address}</p>
               <p className="mt-1 text-sm font-semibold">{unit.phone ?? ""}</p>
+              <div className="mt-4 space-y-1 text-xs font-semibold text-muted-foreground">
+                {formatBusinessHours(unit.businessHours).map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
               <div className="mt-5 grid gap-2 sm:grid-cols-3">
                 <a
                   className="rounded-lg bg-secondary px-3 py-2 text-center text-xs font-bold"
@@ -166,4 +193,17 @@ function routeUrl(unit: WhereUnit) {
 function whatsappUrl(phone: string) {
   const digits = phone.replace(/\D/g, "");
   return `https://wa.me/${digits.startsWith("55") ? digits : `55${digits}`}`;
+}
+
+function geolocationErrorMessage(error: GeolocationPositionError) {
+  if (error.code === 1) {
+    return "A permissão de localização foi negada. Libere o acesso nas configurações do navegador.";
+  }
+  if (error.code === 2) {
+    return "Não foi possível identificar sua localização.";
+  }
+  if (error.code === 3) {
+    return "A localização demorou para responder. Tente novamente.";
+  }
+  return "Não foi possível obter sua localização.";
 }

@@ -2,8 +2,22 @@ import { Link } from "@tanstack/react-router";
 import { Logo } from "./Logo";
 import { CartDrawer } from "./CartDrawer";
 
-export function SiteHeader({ mesa, unidade }: { mesa?: string; unidade?: string }) {
-  const search = { ...(unidade ? { unidade } : {}), ...(mesa ? { mesa } : {}) };
+export function SiteHeader({
+  mesa,
+  unidade,
+  mode,
+}: {
+  mesa?: string;
+  unidade?: string;
+  mode?: string;
+}) {
+  const search = {
+    ...(unidade ? { unidade } : {}),
+    ...(unidade ? { unit: unidade } : {}),
+    ...(mesa ? { mesa } : {}),
+    ...(mesa ? { table: mesa } : {}),
+    ...(mode ? { mode } : {}),
+  };
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">

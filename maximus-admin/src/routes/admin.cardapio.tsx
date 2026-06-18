@@ -161,6 +161,8 @@ function CardapioPage() {
 
   const unitHasProduct = (product: Product) =>
     Boolean(selectedUnitId && (!product.unitIds || product.unitIds.includes(selectedUnitId)));
+  const productActiveInUnit = (product: Product) =>
+    selectedUnitId ? (product.activeByUnit?.[selectedUnitId] ?? unitHasProduct(product)) : false;
 
   function handleDeleteCategory(category: Category) {
     const categoryProducts = allProducts.filter((p) => p.categoryId === category.id);
@@ -324,6 +326,7 @@ function CardapioPage() {
               <div className="space-y-2">
                 {categoryProducts.map((product) => {
                   const available = unitHasProduct(product);
+                  const activeInUnit = productActiveInUnit(product);
                   return (
                     <div
                       key={product.id}
@@ -370,12 +373,12 @@ function CardapioPage() {
                           </span>
                           <span
                             className={`rounded-md px-3 py-2 font-bold ${
-                              product.active
+                              activeInUnit
                                 ? "bg-emerald-500/15 text-emerald-400"
                                 : "bg-secondary text-muted-foreground"
                             }`}
                           >
-                            {product.active ? "Ativo" : "Inativo"}
+                            {activeInUnit ? "Ativo" : "Inativo"}
                           </span>
                           {product.dineInOnly ? (
                             <span className="rounded-md bg-primary/15 px-3 py-2 font-bold text-primary">
@@ -387,7 +390,12 @@ function CardapioPage() {
 
                       <div className="flex flex-wrap justify-end gap-2">
                         <button
-                          onClick={() => setEditingProduct(product)}
+                          onClick={() =>
+                            setEditingProduct({
+                              ...product,
+                              active: productActiveInUnit(product),
+                            })
+                          }
                           className="inline-flex items-center gap-1 rounded-md bg-secondary px-3 py-2 text-xs font-bold hover:bg-accent"
                         >
                           <Pencil className="h-3.5 w-3.5" />

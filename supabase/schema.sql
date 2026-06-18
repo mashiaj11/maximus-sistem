@@ -88,11 +88,28 @@ create table public.products (
   image_url text,
   option_groups jsonb not null default '[]'::jsonb,
   available boolean not null default true,
+  available_for_delivery boolean not null default true,
+  available_for_pickup boolean not null default true,
+  available_for_dine_in boolean not null default true,
+  dine_in_only boolean not null default false,
+  deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint products_unique_slug_per_unit unique (unit_id, slug),
   constraint products_price_non_negative check (price >= 0),
   constraint products_slug_format check (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$')
+);
+
+create table public.product_unit_availability (
+  product_id uuid not null references public.products(id) on delete cascade,
+  unit_id uuid not null references public.units(id) on delete cascade,
+  is_available boolean not null default true,
+  available_for_delivery boolean not null default true,
+  available_for_pickup boolean not null default true,
+  available_for_dine_in boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint product_unit_availability_product_unit_unique unique (product_id, unit_id)
 );
 
 create table public.store_tables (
@@ -341,6 +358,8 @@ create trigger set_categories_updated_at before update on public.categories
 for each row execute function public.set_updated_at();
 create trigger set_products_updated_at before update on public.products
 for each row execute function public.set_updated_at();
+create trigger set_product_unit_availability_updated_at before update on public.product_unit_availability
+for each row execute function public.set_updated_at();
 create trigger set_store_tables_updated_at before update on public.store_tables
 for each row execute function public.set_updated_at();
 create trigger set_delivery_drivers_updated_at before update on public.delivery_drivers
@@ -362,6 +381,8 @@ create index idx_customer_addresses_customer_id on public.customer_addresses(cus
 create index idx_categories_scope_order on public.categories(availability_scope, sort_order);
 create index idx_products_unit_category on public.products(unit_id, category_id);
 create index idx_products_available on public.products(unit_id, available);
+create index idx_product_unit_availability_unit on public.product_unit_availability(unit_id);
+create index idx_product_unit_availability_product on public.product_unit_availability(product_id);
 create index idx_store_tables_unit_id on public.store_tables(unit_id);
 create index idx_delivery_drivers_unit_status on public.delivery_drivers(unit_id, status);
 create index idx_delivery_fee_rules_unit_distance on public.delivery_fee_rules(unit_id, max_distance_km);
@@ -380,6 +401,7 @@ alter table public.customers enable row level security;
 alter table public.customer_addresses enable row level security;
 alter table public.categories enable row level security;
 alter table public.products enable row level security;
+alter table public.product_unit_availability enable row level security;
 alter table public.store_tables enable row level security;
 alter table public.delivery_drivers enable row level security;
 alter table public.orders enable row level security;
@@ -395,6 +417,7 @@ create policy "initial_public_access_customers" on public.customers for all to a
 create policy "initial_public_access_customer_addresses" on public.customer_addresses for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_categories" on public.categories for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_products" on public.products for all to anon, authenticated using (true) with check (true);
+create policy "initial_public_access_product_unit_availability" on public.product_unit_availability for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_store_tables" on public.store_tables for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_delivery_drivers" on public.delivery_drivers for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_orders" on public.orders for all to anon, authenticated using (true) with check (true);
@@ -411,6 +434,7 @@ grant select, insert, update, delete on
   public.customer_addresses,
   public.categories,
   public.products,
+  public.product_unit_availability,
   public.store_tables,
   public.delivery_drivers,
   public.orders,

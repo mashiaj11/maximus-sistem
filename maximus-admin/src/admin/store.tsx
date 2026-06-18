@@ -37,6 +37,7 @@ import {
   updateSupabaseTable,
   updateSupabaseUnit,
   upsertSupabaseAdminSettings,
+  upsertSupabaseProductAvailability,
   validateSupabaseAdminPin,
   loginSupabaseDriver,
   resetSupabaseOperationalData,
@@ -412,12 +413,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         });
         setOrders(data.orders.filter((order) => availableUnitIds.has(order.unitId)));
         setCategories(data.categories);
-        setProducts(
-          data.products.filter(
-            (product) =>
-              !product.unitIds || product.unitIds.some((unitId) => availableUnitIds.has(unitId)),
-          ),
-        );
+        setProducts(data.products);
         setTables(data.tables.filter((table) => availableUnitIds.has(table.unitId)));
         setCouriers(data.couriers.filter((courier) => availableUnitIds.has(courier.unitId)));
         setDeliveryRules(data.deliveryRules.filter((rule) => availableUnitIds.has(rule.unitId)));
@@ -499,9 +495,12 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       ? allOrders.filter((order) => order.unitId === selectedUnitId)
       : [];
     const products = selectedUnitId
-      ? allProducts.filter(
-          (product) => !product.unitIds || product.unitIds.includes(selectedUnitId),
-        )
+      ? allProducts
+          .filter((product) => !product.unitIds || product.unitIds.includes(selectedUnitId))
+          .map((product) => ({
+            ...product,
+            active: product.activeByUnit?.[selectedUnitId] ?? product.active,
+          }))
       : [];
     const tables = selectedUnitId
       ? allTables.filter((table) => table.unitId === selectedUnitId)
@@ -981,23 +980,63 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         }
       },
       toggleProduct: async (productId) => {
+        if (!selectedUnitId) return;
         const product = allProducts.find((item) => item.id === productId);
         if (!product) return;
-        const active = !product.active;
-        setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, active } : p)));
+        const active = !(
+          product.activeByUnit?.[selectedUnitId] ??
+          product.unitIds?.includes(selectedUnitId) ??
+          false
+        );
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === productId
+              ? {
+                  ...p,
+                  active,
+                  activeByUnit: { ...(p.activeByUnit ?? {}), [selectedUnitId]: active },
+                  unitIds: active
+                    ? [...new Set([...(p.unitIds ?? []), selectedUnitId])]
+                    : (p.unitIds ?? []).filter((id) => id !== selectedUnitId),
+                }
+              : p,
+          ),
+        );
         if (isSupabaseConfigured) {
           try {
-            await setSupabaseProductAvailable(productId, active);
+            await setSupabaseProductAvailable(productId, selectedUnitId, active);
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao alternar produto", error);
           }
         }
       },
       updateProduct: async (productId, patch) => {
-        setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, ...patch } : p)));
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === productId
+              ? {
+                  ...p,
+                  ...patch,
+                  activeByUnit:
+                    selectedUnitId && patch.active !== undefined
+                      ? { ...(p.activeByUnit ?? {}), [selectedUnitId]: patch.active }
+                      : p.activeByUnit,
+                  unitIds:
+                    selectedUnitId && patch.active !== undefined
+                      ? patch.active
+                        ? [...new Set([...(p.unitIds ?? []), selectedUnitId])]
+                        : (p.unitIds ?? []).filter((id) => id !== selectedUnitId)
+                      : p.unitIds,
+                }
+              : p,
+          ),
+        );
         if (isSupabaseConfigured) {
           try {
             await updateSupabaseProduct(productId, patch);
+            if (selectedUnitId) {
+              await upsertSupabaseProductAvailability(productId, selectedUnitId, patch);
+            }
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao atualizar produto", error);
           }
@@ -1044,11 +1083,28 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       toggleProductForCurrentUnit: async (productId) => {
         if (!selectedUnitId) return;
         const product = allProducts.find((item) => item.id === productId);
-        if (isSupabaseConfigured && product?.unitIds?.includes(selectedUnitId)) {
-          const active = !product.active;
-          setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, active } : p)));
+        if (isSupabaseConfigured && product) {
+          const active = !(
+            product.activeByUnit?.[selectedUnitId] ??
+            product.unitIds?.includes(selectedUnitId) ??
+            false
+          );
+          setProducts((prev) =>
+            prev.map((p) =>
+              p.id === productId
+                ? {
+                    ...p,
+                    active,
+                    activeByUnit: { ...(p.activeByUnit ?? {}), [selectedUnitId]: active },
+                    unitIds: active
+                      ? [...new Set([...(p.unitIds ?? []), selectedUnitId])]
+                      : (p.unitIds ?? []).filter((id) => id !== selectedUnitId),
+                  }
+                : p,
+            ),
+          );
           try {
-            await setSupabaseProductAvailable(productId, active);
+            await setSupabaseProductAvailable(productId, selectedUnitId, active);
           } catch (error) {
             console.error(
               "[Maximus][Supabase] Falha ao alternar disponibilidade do produto",

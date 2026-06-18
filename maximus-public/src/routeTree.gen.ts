@@ -14,8 +14,10 @@ import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as PrivacidadeRouteImport } from './routes/privacidade'
 import { Route as OndeEstamosRouteImport } from './routes/onde-estamos'
 import { Route as MeusPedidosRouteImport } from './routes/meus-pedidos'
+import { Route as MesaRouteImport } from './routes/mesa'
 import { Route as MenuRouteImport } from './routes/menu'
 import { Route as ExcluirDadosRouteImport } from './routes/excluir-dados'
+import { Route as CheckoutMesaRouteImport } from './routes/checkout-mesa'
 import { Route as CheckoutRouteImport } from './routes/checkout'
 import { Route as AcompanharRouteImport } from './routes/acompanhar'
 import { Route as IndexRouteImport } from './routes/index'
@@ -46,6 +48,11 @@ const MeusPedidosRoute = MeusPedidosRouteImport.update({
   path: '/meus-pedidos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MesaRoute = MesaRouteImport.update({
+  id: '/mesa',
+  path: '/mesa',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MenuRoute = MenuRouteImport.update({
   id: '/menu',
   path: '/menu',
@@ -54,6 +61,11 @@ const MenuRoute = MenuRouteImport.update({
 const ExcluirDadosRoute = ExcluirDadosRouteImport.update({
   id: '/excluir-dados',
   path: '/excluir-dados',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CheckoutMesaRoute = CheckoutMesaRouteImport.update({
+  id: '/checkout-mesa',
+  path: '/checkout-mesa',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CheckoutRoute = CheckoutRouteImport.update({
@@ -81,8 +93,10 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/acompanhar': typeof AcompanharRouteWithChildren
   '/checkout': typeof CheckoutRoute
+  '/checkout-mesa': typeof CheckoutMesaRoute
   '/excluir-dados': typeof ExcluirDadosRoute
   '/menu': typeof MenuRoute
+  '/mesa': typeof MesaRoute
   '/meus-pedidos': typeof MeusPedidosRoute
   '/onde-estamos': typeof OndeEstamosRoute
   '/privacidade': typeof PrivacidadeRoute
@@ -94,8 +108,10 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/acompanhar': typeof AcompanharRouteWithChildren
   '/checkout': typeof CheckoutRoute
+  '/checkout-mesa': typeof CheckoutMesaRoute
   '/excluir-dados': typeof ExcluirDadosRoute
   '/menu': typeof MenuRoute
+  '/mesa': typeof MesaRoute
   '/meus-pedidos': typeof MeusPedidosRoute
   '/onde-estamos': typeof OndeEstamosRoute
   '/privacidade': typeof PrivacidadeRoute
@@ -108,8 +124,10 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/acompanhar': typeof AcompanharRouteWithChildren
   '/checkout': typeof CheckoutRoute
+  '/checkout-mesa': typeof CheckoutMesaRoute
   '/excluir-dados': typeof ExcluirDadosRoute
   '/menu': typeof MenuRoute
+  '/mesa': typeof MesaRoute
   '/meus-pedidos': typeof MeusPedidosRoute
   '/onde-estamos': typeof OndeEstamosRoute
   '/privacidade': typeof PrivacidadeRoute
@@ -123,8 +141,10 @@ export interface FileRouteTypes {
     | '/'
     | '/acompanhar'
     | '/checkout'
+    | '/checkout-mesa'
     | '/excluir-dados'
     | '/menu'
+    | '/mesa'
     | '/meus-pedidos'
     | '/onde-estamos'
     | '/privacidade'
@@ -136,8 +156,10 @@ export interface FileRouteTypes {
     | '/'
     | '/acompanhar'
     | '/checkout'
+    | '/checkout-mesa'
     | '/excluir-dados'
     | '/menu'
+    | '/mesa'
     | '/meus-pedidos'
     | '/onde-estamos'
     | '/privacidade'
@@ -149,8 +171,10 @@ export interface FileRouteTypes {
     | '/'
     | '/acompanhar'
     | '/checkout'
+    | '/checkout-mesa'
     | '/excluir-dados'
     | '/menu'
+    | '/mesa'
     | '/meus-pedidos'
     | '/onde-estamos'
     | '/privacidade'
@@ -163,8 +187,10 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AcompanharRoute: typeof AcompanharRouteWithChildren
   CheckoutRoute: typeof CheckoutRoute
+  CheckoutMesaRoute: typeof CheckoutMesaRoute
   ExcluirDadosRoute: typeof ExcluirDadosRoute
   MenuRoute: typeof MenuRoute
+  MesaRoute: typeof MesaRoute
   MeusPedidosRoute: typeof MeusPedidosRoute
   OndeEstamosRoute: typeof OndeEstamosRoute
   PrivacidadeRoute: typeof PrivacidadeRoute
@@ -209,6 +235,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MeusPedidosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/mesa': {
+      id: '/mesa'
+      path: '/mesa'
+      fullPath: '/mesa'
+      preLoaderRoute: typeof MesaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/menu': {
       id: '/menu'
       path: '/menu'
@@ -221,6 +254,13 @@ declare module '@tanstack/react-router' {
       path: '/excluir-dados'
       fullPath: '/excluir-dados'
       preLoaderRoute: typeof ExcluirDadosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/checkout-mesa': {
+      id: '/checkout-mesa'
+      path: '/checkout-mesa'
+      fullPath: '/checkout-mesa'
+      preLoaderRoute: typeof CheckoutMesaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/checkout': {
@@ -270,8 +310,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AcompanharRoute: AcompanharRouteWithChildren,
   CheckoutRoute: CheckoutRoute,
+  CheckoutMesaRoute: CheckoutMesaRoute,
   ExcluirDadosRoute: ExcluirDadosRoute,
   MenuRoute: MenuRoute,
+  MesaRoute: MesaRoute,
   MeusPedidosRoute: MeusPedidosRoute,
   OndeEstamosRoute: OndeEstamosRoute,
   PrivacidadeRoute: PrivacidadeRoute,

@@ -3,13 +3,28 @@ export interface GeoPoint {
   longitude: number;
 }
 
+export type WeekdayKey = "segunda" | "terca" | "quarta" | "quinta" | "sexta" | "sabado" | "domingo";
+
+export interface BusinessHourPeriod {
+  opensAt: string;
+  closesAt: string;
+}
+
+export interface PublicBusinessHour {
+  day: WeekdayKey;
+  open: boolean;
+  periods: BusinessHourPeriod[];
+}
+
 export interface GeoUnit extends GeoPoint {
   id: string;
   name: string;
   slug: string;
   isOpen: boolean;
+  address?: string;
   phone?: string;
   whatsappPhone?: string;
+  businessHours?: PublicBusinessHour[];
   minimumOrderValue?: number;
   baseDeliveryFee?: number;
   deliveryFeePerKm?: number;

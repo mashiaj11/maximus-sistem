@@ -13,8 +13,19 @@ import { buildCartItemId, calculateUnitPrice, getCustomizations } from "./cart-c
 
 /* ----------------------------- Cart store ----------------------------- */
 
+export interface OrderContextData {
+  unit?: string;
+  table?: string;
+  mode?: "dine_in" | "delivery" | "pickup";
+  source?: "qr" | "manual";
+}
+
 interface CartContextValue {
   items: CartItem[];
+  orderContext: OrderContextData | null;
+  setOrderContext: (context: OrderContextData) => void;
+  clearOrderContext: () => void;
+  getEffectiveOrderContext: (context?: OrderContextData | null) => OrderContextData | null;
   addItem: (product: Product, selections: SelectedOptions, note?: string) => void;
   updateItem: (itemId: string, selections: SelectedOptions, note?: string) => void;
   removeItem: (itemId: string) => void;
@@ -26,10 +37,67 @@ interface CartContextValue {
   subtotal: number;
 }
 
+const ORDER_CONTEXT_STORAGE_KEY = "maximus:order-context";
+
+function normalizeOrderContext(context?: OrderContextData | null): OrderContextData | null {
+  if (!context) return null;
+  const unit = context.unit?.trim() || undefined;
+  const table = context.table?.trim() || undefined;
+  const mode = context.mode;
+  if (!unit && !table && !mode) return null;
+  return {
+    ...(unit ? { unit } : {}),
+    ...(table ? { table } : {}),
+    ...(mode ? { mode } : {}),
+    ...(context.source ? { source: context.source } : {}),
+  };
+}
+
+function readStoredOrderContext(): OrderContextData | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(ORDER_CONTEXT_STORAGE_KEY);
+    return normalizeOrderContext(raw ? (JSON.parse(raw) as OrderContextData) : null);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredOrderContext(context: OrderContextData | null) {
+  if (typeof window === "undefined") return;
+  if (!context) {
+    window.sessionStorage.removeItem(ORDER_CONTEXT_STORAGE_KEY);
+    return;
+  }
+  window.sessionStorage.setItem(ORDER_CONTEXT_STORAGE_KEY, JSON.stringify(context));
+}
+
 const CartContext = createContext<CartContextValue | null>(null);
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [order, setOrder] = useState<OrderInfo | null>(null);
+  const [orderContext, setStoredOrderContext] = useState<OrderContextData | null>(
+    readStoredOrderContext,
+  );
+
+  const setOrderContext = useCallback((context: OrderContextData) => {
+    setStoredOrderContext((prev) => {
+      const next = normalizeOrderContext({ ...prev, ...context });
+      writeStoredOrderContext(next);
+      console.log("OrderContext salvo", next);
+      return next;
+    });
+  }, []);
+
+  const clearOrderContext = useCallback(() => {
+    writeStoredOrderContext(null);
+    setStoredOrderContext(null);
+  }, []);
+
+  const getEffectiveOrderContext = useCallback(
+    (context?: OrderContextData | null) => normalizeOrderContext({ ...orderContext, ...context }),
+    [orderContext],
+  );
 
   const addItem = useCallback((product: Product, selections: SelectedOptions, note?: string) => {
     setItems((prev) => {
@@ -107,19 +175,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setItems((prev) => prev.map((i) => (i.id === itemId ? { ...i, note } : i)));
   }, []);
 
-  const clear = useCallback(() => setItems([]), []);
+  const clear = useCallback(() => {
+    setItems([]);
+    clearOrderContext();
+  }, [clearOrderContext]);
 
   const subtotal = useMemo(() => items.reduce((s, i) => s + i.unitPrice * i.quantity, 0), [items]);
   const count = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items]);
 
-  const placeOrder = useCallback((info: OrderInfo) => {
-    setOrder(info);
-    setItems([]);
-  }, []);
+  const placeOrder = useCallback(
+    (info: OrderInfo) => {
+      setOrder(info);
+      setItems([]);
+      clearOrderContext();
+    },
+    [clearOrderContext],
+  );
   const clearOrder = useCallback(() => setOrder(null), []);
 
   const cartValue: CartContextValue = {
     items,
+    orderContext,
+    setOrderContext,
+    clearOrderContext,
+    getEffectiveOrderContext,
     addItem,
     updateItem,
     removeItem,
