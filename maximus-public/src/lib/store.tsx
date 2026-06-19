@@ -32,6 +32,7 @@ interface CartContextValue {
   inc: (itemId: string) => void;
   dec: (itemId: string) => void;
   updateNote: (itemId: string, note: string) => void;
+  clearItems: () => void;
   clear: () => void;
   count: number;
   subtotal: number;
@@ -175,6 +176,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setItems((prev) => prev.map((i) => (i.id === itemId ? { ...i, note } : i)));
   }, []);
 
+  const clearItems = useCallback(() => {
+    setItems([]);
+  }, []);
+
   const clear = useCallback(() => {
     setItems([]);
     clearOrderContext();
@@ -205,6 +210,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     inc,
     dec,
     updateNote,
+    clearItems,
     clear,
     count,
     subtotal,

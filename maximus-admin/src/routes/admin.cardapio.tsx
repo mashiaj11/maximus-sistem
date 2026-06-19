@@ -4,7 +4,13 @@ import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
 import { formatBRL, useAdmin } from "@/admin/store";
-import type { Category, Product, ProductDraft, ProductOptionGroup } from "@/admin/data/types";
+import type {
+  Category,
+  PrintDestination,
+  Product,
+  ProductDraft,
+  ProductOptionGroup,
+} from "@/admin/data/types";
 
 export const Route = createFileRoute("/admin/cardapio")({
   component: CardapioPage,
@@ -251,12 +257,29 @@ function CardapioPage() {
                       }
                       className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
                     />
+                    <select
+                      aria-label="Destino de impressão"
+                      value={editingCategory.printDestination ?? "kitchen"}
+                      onChange={(event) =>
+                        setEditingCategory({
+                          ...editingCategory,
+                          printDestination: event.target.value as PrintDestination,
+                        })
+                      }
+                      className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+                    >
+                      <option value="kitchen">Cozinha</option>
+                      <option value="cashier">Caixa</option>
+                      <option value="bar">Bar</option>
+                      <option value="none">Não imprimir</option>
+                    </select>
                     <div className="flex gap-2">
                       <button
                         onClick={() => {
                           updateCategory(category.id, {
                             name: editingCategory.name,
                             order: editingCategory.order,
+                            printDestination: editingCategory.printDestination,
                           });
                           setEditingCategory(null);
                         }}
@@ -281,6 +304,15 @@ function CardapioPage() {
                         <h2 className="text-xl font-black">{category.name}</h2>
                         <span className="rounded-md bg-secondary px-2 py-1 text-xs font-bold text-muted-foreground">
                           #{category.order}
+                        </span>
+                        <span className="rounded-md bg-secondary px-2 py-1 text-xs font-bold text-muted-foreground">
+                          {category.printDestination === "cashier"
+                            ? "Caixa"
+                            : category.printDestination === "bar"
+                              ? "Bar"
+                              : category.printDestination === "none"
+                                ? "Sem impressão"
+                                : "Cozinha"}
                         </span>
                         {!active && (
                           <span className="rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-bold text-primary">

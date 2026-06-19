@@ -5,13 +5,17 @@ import {
   useEffect,
   useMemo,
   useState,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import { UNITS } from "./data/units";
 import {
   assignSupabaseDeliveryDriver,
   buildTablePublicUrl,
   completeSupabaseDeliveryByDriver,
+  claimNextSupabasePrintJob,
+  createSupabasePrintJobs,
   deleteSupabaseCategory,
   deleteSupabaseCourier,
   deleteSupabaseDeliveryRule,
@@ -41,11 +45,12 @@ import {
   validateSupabaseAdminPin,
   loginSupabaseDriver,
   resetSupabaseOperationalData,
+  finishSupabasePrintJob,
   startSupabaseDeliveryNavigation,
 } from "./supabase-data";
 import { useAuth } from "@/auth/AuthProvider";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
-import { printKitchenOrder } from "./printing";
+import { buildPrintHtmlForDestination, isElectronDesktop, printRenderedHtml } from "./printing";
 import { sendWhatsAppStatusMessage } from "./whatsapp";
 import type {
   AdminUnit,
@@ -63,6 +68,7 @@ import type {
   OrderType,
   PaymentMethod,
   PaymentStatus,
+  PrintJobDestination,
   Product,
   ProductDraft,
   RestaurantTable,
@@ -128,7 +134,10 @@ interface AdminContextValue {
   advanceStatus: (orderId: string) => void;
   assignDeliveryCourier: (orderId: string, courierId: string) => void;
   updateDriverLocation: (orderId: string, latitude: number, longitude: number) => void;
-  startDeliveryNavigation: (orderId: string) => void;
+  startDeliveryNavigation: (
+    orderId: string,
+    driverLocation?: { latitude: number; longitude: number },
+  ) => Promise<void>;
   markDeliveryArrived: (orderId: string) => Promise<void>;
   completeDeliveryByDriver: (orderId: string, paymentConfirmed: boolean) => void;
   setPayment: (orderId: string, status: PaymentStatus, source?: StatusChangeSource) => void;
@@ -138,7 +147,10 @@ interface AdminContextValue {
   deleteProduct: (productId: string) => void;
   toggleProductForCurrentUnit: (productId: string) => void;
   addCategory: (name: string) => void;
-  updateCategory: (categoryId: string, patch: Partial<Pick<Category, "name" | "order">>) => void;
+  updateCategory: (
+    categoryId: string,
+    patch: Partial<Pick<Category, "name" | "order" | "printDestination">>,
+  ) => void;
   deleteCategory: (categoryId: string) => Promise<void>;
   toggleCategoryForCurrentUnit: (categoryId: string) => void;
   addTable: () => Promise<void>;
@@ -369,6 +381,67 @@ function normalizeUnits(units: AdminUnit[]): AdminUnit[] {
   return units.map(normalizeUnit);
 }
 
+function buildAutoPrintJobs(order: Order, unit?: AdminUnit | null) {
+  const groups = new Map<PrintJobDestination, Order["items"]>();
+  for (const item of order.items) {
+    const destination = item.printDestination ?? "kitchen";
+    if (destination === "none") continue;
+    const printDestination = destination as PrintJobDestination;
+    groups.set(printDestination, [...(groups.get(printDestination) ?? []), item]);
+  }
+  return [...groups.entries()].map(([destination, items]) => ({
+    destination,
+    payload: {
+      order,
+      unit,
+      items,
+      destination,
+    },
+  }));
+}
+
+function findPrinterForJob(
+  settings: MaximusPrintSettings | null,
+  unitId: UnitId,
+  destination: PrintJobDestination,
+) {
+  return (
+    settings?.printers.find(
+      (printer) =>
+        printer.unitId === unitId &&
+        printer.destination === destination &&
+        printer.enabled &&
+        printer.autoPrint &&
+        (printer.simulate ||
+          ((printer.connectionMode ?? "system") === "system" && Boolean(printer.deviceName))),
+    ) ?? null
+  );
+}
+
+function markOrderPrintStatus(
+  setOrders: Dispatch<SetStateAction<Order[]>>,
+  orderId: string,
+  status: Order["kitchenPrintStatus"],
+  printedAt?: string,
+) {
+  setOrders((prev) =>
+    prev.map((item) =>
+      item.id === orderId
+        ? {
+            ...item,
+            kitchenPrintStatus: status,
+            ...(printedAt ? { kitchenPrintedAt: printedAt } : {}),
+          }
+        : item,
+    ),
+  );
+  if (isSupabaseConfigured) {
+    updateSupabaseOrderKitchenPrintStatus(orderId, status, printedAt).catch((error) => {
+      console.error("[Maximus][Supabase] Falha ao atualizar status de impressao", error);
+    });
+  }
+}
+
 export function AdminProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const [selectedUnitId, setSelectedUnitId] = useState<UnitId | null>(() =>
@@ -489,6 +562,83 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     writeLocalStorage(LOCAL_STORAGE_KEYS.sessionUnitId, selectedUnitId);
   }, [selectedUnitId]);
 
+  useEffect(() => {
+    if (!isSupabaseConfigured || !selectedUnitId || !isElectronDesktop()) return;
+    let cancelled = false;
+    let running = false;
+
+    async function processPrintQueue() {
+      if (running || cancelled || !selectedUnitId) return;
+      running = true;
+      try {
+        const settings = (await window.maximusDesktop?.getPrintSettings()) ?? null;
+        const job = await claimNextSupabasePrintJob(selectedUnitId);
+        if (!job || cancelled) return;
+
+        const payload = job.payload as {
+          order?: Order;
+          unit?: AdminUnit | null;
+          items?: Order["items"];
+          destination?: PrintJobDestination;
+        };
+        if (!payload.order || !payload.items?.length) {
+          await finishSupabasePrintJob(job.id, "failed", "Job sem dados de pedido ou itens.");
+          markOrderPrintStatus(setOrders, job.orderId, "error");
+          return;
+        }
+
+        const printer = findPrinterForJob(settings, selectedUnitId, job.destination);
+        if (!printer) {
+          await finishSupabasePrintJob(
+            job.id,
+            "failed",
+            "Nenhuma impressora local habilitada para esta unidade e setor.",
+          );
+          markOrderPrintStatus(setOrders, job.orderId, "error");
+          return;
+        }
+
+        const html = buildPrintHtmlForDestination(
+          payload.order,
+          payload.unit,
+          job.destination,
+          payload.items,
+          printer.paperWidth,
+        );
+        const result = await printRenderedHtml(html, printer, {
+          jobId: job.id,
+          orderId: job.orderId,
+          orderNumber: payload.order.number,
+          destination: job.destination,
+          unitId: selectedUnitId,
+        });
+        if (result.ok) {
+          const printedAt = new Date().toISOString();
+          await finishSupabasePrintJob(
+            job.id,
+            printer.simulate ? "simulated" : "printed",
+            "file" in result ? String(result.file) : undefined,
+          );
+          markOrderPrintStatus(setOrders, job.orderId, "printed", printedAt);
+          return;
+        }
+        await finishSupabasePrintJob(job.id, "failed", result.error ?? "Falha na impressão.");
+        markOrderPrintStatus(setOrders, job.orderId, "error");
+      } catch (error) {
+        console.error("[Maximus][PrintQueue] Falha ao processar fila de impressao", error);
+      } finally {
+        running = false;
+      }
+    }
+
+    processPrintQueue();
+    const interval = window.setInterval(processPrintQueue, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [selectedUnitId]);
+
   const value = useMemo<AdminContextValue>(() => {
     const selectedUnit = allUnits.find((unit) => unit.id === selectedUnitId) ?? null;
     const orders = selectedUnitId
@@ -519,67 +669,20 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           .sort((a, b) => a.maxDistanceKm - b.maxDistanceKm)
       : [];
     const triggerKitchenPrint = (order: Order) => {
-      const settings = normalizeKitchenPrintSettings(
-        allUnits.find((unit) => unit.id === order.unitId)?.kitchenPrintSettings,
-      );
-
-      if (!settings.autoPrintEnabled) {
-        setOrders((prev) =>
-          prev.map((item) =>
-            item.id === order.id ? { ...item, kitchenPrintStatus: "disabled" } : item,
-          ),
-        );
-        if (isSupabaseConfigured) {
-          updateSupabaseOrderKitchenPrintStatus(order.id, "disabled").catch((error) => {
-            console.error("[Maximus][Supabase] Falha ao atualizar status de impressao", error);
-          });
-        }
+      const unit = allUnits.find((item) => item.id === order.unitId) ?? null;
+      const jobs = buildAutoPrintJobs(order, unit);
+      if (!jobs.length) {
+        markOrderPrintStatus(setOrders, order.id, "disabled");
         return;
       }
 
-      setOrders((prev) =>
-        prev.map((item) =>
-          item.id === order.id ? { ...item, kitchenPrintStatus: "pending" } : item,
-        ),
-      );
-      if (isSupabaseConfigured) {
-        updateSupabaseOrderKitchenPrintStatus(order.id, "pending").catch((error) => {
-          console.error("[Maximus][Supabase] Falha ao atualizar status de impressao", error);
-        });
-      }
+      markOrderPrintStatus(setOrders, order.id, "pending");
+      if (!isSupabaseConfigured) return;
 
-      printKitchenOrder(order)
-        .then(() => {
-          const printedAt = new Date().toISOString();
-          setOrders((prev) =>
-            prev.map((item) =>
-              item.id === order.id
-                ? { ...item, kitchenPrintStatus: "printed", kitchenPrintedAt: printedAt }
-                : item,
-            ),
-          );
-          if (isSupabaseConfigured) {
-            updateSupabaseOrderKitchenPrintStatus(order.id, "printed", printedAt).catch((error) => {
-              console.error("[Maximus][Supabase] Falha ao confirmar impressao", error);
-            });
-          }
-        })
-        .catch((error) => {
-          console.error("[Maximus][KitchenPrint] Falha ao imprimir comanda", error);
-          setOrders((prev) =>
-            prev.map((item) =>
-              item.id === order.id ? { ...item, kitchenPrintStatus: "error" } : item,
-            ),
-          );
-          if (isSupabaseConfigured) {
-            updateSupabaseOrderKitchenPrintStatus(order.id, "error").catch((supabaseError) => {
-              console.error(
-                "[Maximus][Supabase] Falha ao registrar erro de impressao",
-                supabaseError,
-              );
-            });
-          }
-        });
+      createSupabasePrintJobs(order, jobs).catch((error) => {
+        console.error("[Maximus][PrintQueue] Falha ao criar jobs de impressao", error);
+        markOrderPrintStatus(setOrders, order.id, "error");
+      });
     };
 
     const notifyWhatsApp = (order: Order, status: OrderStatus) => {
@@ -673,7 +776,6 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         if (!order) return;
         if (order.status === status) return;
         const finished = isFinalStatus(status);
-        const delivered = status === "delivered";
         const deliveredAt = finished ? new Date().toISOString() : undefined;
         const nextOrder = {
           ...order,
@@ -681,25 +783,8 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           deliveryStatus: status,
           ...(deliveredAt ? { deliveredAt } : {}),
         };
-        const driverId = order.deliveryDriverId ?? order.courierId;
 
         setOrders((prev) => prev.map((item) => (item.id === orderId ? nextOrder : item)));
-        if (delivered && driverId) {
-          setCouriers((couriers) =>
-            couriers.map((courier) =>
-              courier.id === driverId
-                ? { ...courier, status: "disponivel", active: true }
-                : courier,
-            ),
-          );
-          if (isSupabaseConfigured) {
-            updateSupabaseCourier(driverId, { status: "disponivel", active: true }).catch(
-              (error) => {
-                console.error("[Maximus][Supabase] Falha ao liberar entregador", error);
-              },
-            );
-          }
-        }
         if (status === "in_preparation") triggerKitchenPrint(nextOrder);
         if (isSupabaseConfigured) {
           try {
@@ -716,7 +801,6 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         const next = getNextStatus(order.type, order.status);
         if (!next) return;
         const finished = isFinalStatus(next);
-        const delivered = next === "delivered";
         const deliveredAt = finished ? new Date().toISOString() : undefined;
         const nextOrder = {
           ...order,
@@ -724,25 +808,8 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           deliveryStatus: next,
           ...(deliveredAt ? { deliveredAt } : {}),
         };
-        const driverId = order.deliveryDriverId ?? order.courierId;
 
         setOrders((prev) => prev.map((item) => (item.id === orderId ? nextOrder : item)));
-        if (delivered && driverId) {
-          setCouriers((couriers) =>
-            couriers.map((courier) =>
-              courier.id === driverId
-                ? { ...courier, status: "disponivel", active: true }
-                : courier,
-            ),
-          );
-          if (isSupabaseConfigured) {
-            updateSupabaseCourier(driverId, { status: "disponivel", active: true }).catch(
-              (error) => {
-                console.error("[Maximus][Supabase] Falha ao liberar entregador", error);
-              },
-            );
-          }
-        }
         if (next === "in_preparation") triggerKitchenPrint(nextOrder);
         if (isSupabaseConfigured) {
           try {
@@ -758,17 +825,12 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         if (!courier || !courier.active || courier.status !== "disponivel") return;
         const order = allOrders.find((item) => item.id === orderId);
         if (!order || order.paymentStatus !== "confirmed") return;
-        const statusChanged = order.status !== "out_for_delivery";
         const payoutAmount = resolveDeliveryPayout(order, allDeliveryRules);
-        const now = new Date().toISOString();
-        let assignedOrder: Order | null = null;
         setOrders((prev) =>
           prev.map((order) => {
             if (order.id !== orderId) return order;
-            assignedOrder = {
+            return {
               ...order,
-              status: "out_for_delivery",
-              deliveryStatus: "out_for_delivery",
               courierId: courier.id,
               courierName: courier.name,
               deliveryDriverId: courier.id,
@@ -779,20 +841,12 @@ export function AdminProvider({ children }: { children: ReactNode }) {
               deliveryPayoutAmount: payoutAmount,
               driverEarnedValue: payoutAmount,
               driver_earned_value: payoutAmount,
-              outForDeliveryAt: now,
             };
-            return assignedOrder;
           }),
-        );
-        setCouriers((prev) =>
-          prev.map((item) =>
-            item.id === courierId ? { ...item, status: "em_entrega", active: true } : item,
-          ),
         );
         if (isSupabaseConfigured) {
           try {
-            await assignSupabaseDeliveryDriver(orderId, courier, payoutAmount, now);
-            if (statusChanged && assignedOrder) notifyWhatsApp(assignedOrder, "out_for_delivery");
+            await assignSupabaseDeliveryDriver(orderId, courier, payoutAmount);
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao atribuir entregador", error);
           }
@@ -835,7 +889,9 @@ export function AdminProvider({ children }: { children: ReactNode }) {
             ? "arrived"
             : canMoveToNearby && distanceToCustomer != null && distanceToCustomer <= 0.5
               ? "driver_nearby"
-              : "driver_on_way";
+              : canMoveToNearby
+                ? "driver_on_way"
+                : (order?.status ?? "ready");
         console.info("[Maximus][driver-location]", {
           pedido: orderId,
           latitudeEntregador: latitude,
@@ -867,31 +923,33 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           }
         }
       },
-      startDeliveryNavigation: async (orderId) => {
+      startDeliveryNavigation: async (orderId, driverLocation) => {
         const order = allOrders.find((item) => item.id === orderId);
         if (!order) return;
+        if (!driverLocation) throw new Error("GPS do entregador indisponível.");
         const now = new Date().toISOString();
-        const shouldMoveOut = order.status === "ready" || order.status === "ready_for_pickup";
         const patch: Partial<Order> = {
           navigationStartedAt: now,
           navigation_started_at: now,
-          ...(shouldMoveOut
-            ? {
-                status: "out_for_delivery",
-                deliveryStatus: "out_for_delivery",
-                outForDeliveryAt: order.outForDeliveryAt ?? now,
-              }
-            : {}),
+          status: "driver_on_way",
+          deliveryStatus: "driver_on_way",
+          outForDeliveryAt: order.outForDeliveryAt ?? now,
+          out_for_delivery_at: order.out_for_delivery_at ?? now,
+          driverLat: driverLocation.latitude,
+          driverLng: driverLocation.longitude,
+          driver_lat: driverLocation.latitude,
+          driver_lng: driverLocation.longitude,
         };
         setOrders((prev) =>
           prev.map((item) => (item.id === orderId ? { ...item, ...patch } : item)),
         );
         if (isSupabaseConfigured) {
           try {
-            await startSupabaseDeliveryNavigation(order, now);
-            if (shouldMoveOut) notifyWhatsApp({ ...order, ...patch }, "out_for_delivery");
+            await startSupabaseDeliveryNavigation(order, now, driverLocation);
+            notifyWhatsApp({ ...order, ...patch }, "driver_on_way");
           } catch (error) {
             console.error("[Maximus][Supabase] Falha ao registrar navegacao", error);
+            throw error;
           }
         }
       },
@@ -945,35 +1003,14 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           driver_name:
             order.driver_name ?? order.deliveryDriverName ?? order.courierName ?? driver?.name,
         };
-        setOrders((prev) => prev.map((item) => (item.id === orderId ? nextOrder : item)));
-        if (driverId) {
-          setCouriers((couriers) =>
-            couriers.map((courier) =>
-              courier.id === driverId
-                ? { ...courier, status: "disponivel", active: true }
-                : courier,
-            ),
-          );
-        }
+        const nextOrders = allOrders.map((item) => (item.id === orderId ? nextOrder : item));
+        setOrders(nextOrders);
         if (isSupabaseConfigured) {
           try {
             await completeSupabaseDeliveryByDriver(order, paymentConfirmed, now);
             notifyWhatsApp(nextOrder, "delivered");
           } catch (error) {
             setOrders((prev) => prev.map((item) => (item.id === orderId ? order : item)));
-            if (driverId) {
-              setCouriers((couriers) =>
-                couriers.map((courier) =>
-                  courier.id === driverId
-                    ? {
-                        ...courier,
-                        status: driver?.status ?? courier.status,
-                        active: driver?.active ?? courier.active,
-                      }
-                    : courier,
-                ),
-              );
-            }
             console.error("[Maximus][Supabase] Falha ao finalizar entrega", error);
             throw error;
           }
@@ -1625,6 +1662,7 @@ export function orderLocation(order: Order): string {
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   pix_app: "Pix app",
   pix_balcao: "Pix balcão",
+  local: "Pagamento no local",
   cartao: "Cartão",
   dinheiro: "Dinheiro",
 };

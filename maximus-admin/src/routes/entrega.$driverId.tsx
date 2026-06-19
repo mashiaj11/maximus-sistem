@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AdminProvider, formatBRL, formatElapsed, formatTime, useAdmin } from "@/admin/store";
 import { STATUS_LABELS } from "@/admin/data/statuses";
 import type { Order } from "@/admin/data/types";
-import { DeliveryRouteMap } from "@/admin/components/MapView";
 import { getDriverColor, getFinancialTone } from "@/admin/visual-tokens";
 
 const logoUrl = "/branding/maximus-logo.png";
@@ -27,11 +26,11 @@ function DriverPanel() {
   const {
     allCouriers,
     allOrders,
-    units,
     updateDriverLocation,
     startDeliveryNavigation,
     markDeliveryArrived,
     completeDeliveryByDriver,
+    updateCourier,
   } = useAdmin();
   const [gpsStatus, setGpsStatus] = useState("GPS não solicitado");
   const [driverLocation, setDriverLocation] = useState<{
@@ -41,9 +40,11 @@ function DriverPanel() {
   const [routeMode, setRouteMode] = useState(false);
   const [selectedRouteOrders, setSelectedRouteOrders] = useState<Record<string, boolean>>({});
   const [savingActionByOrder, setSavingActionByOrder] = useState<
-    Record<string, "arrived" | "delivered" | undefined>
+    Record<string, "navigation" | "arrived" | "delivered" | undefined>
   >({});
   const [deliveryErrorByOrder, setDeliveryErrorByOrder] = useState<Record<string, string>>({});
+  const [navigationOrder, setNavigationOrder] = useState<Order | null>(null);
+  const [availabilitySaving, setAvailabilitySaving] = useState(false);
   const lastDriverUpdateRef = useRef(0);
   const driver = allCouriers.find((courier) => courier.id === driverId);
   const sessionDriverId =
@@ -183,6 +184,51 @@ function DriverPanel() {
             <p className="mb-4 rounded-xl border border-border bg-card p-3 text-sm font-semibold text-muted-foreground">
               {gpsStatus}
             </p>
+            <section className="mb-4 rounded-xl border border-border bg-card p-4">
+              <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                Disponibilidade
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  disabled={availabilitySaving || driver?.status === "disponivel"}
+                  onClick={async () => {
+                    if (!driver) return;
+                    setAvailabilitySaving(true);
+                    try {
+                      await updateCourier(driver.id, { status: "disponivel", active: true });
+                    } finally {
+                      setAvailabilitySaving(false);
+                    }
+                  }}
+                  className={`rounded-lg px-4 py-3 text-sm font-extrabold disabled:cursor-not-allowed disabled:opacity-70 ${
+                    driver?.status === "disponivel"
+                      ? "bg-emerald-500 text-white"
+                      : "bg-secondary"
+                  }`}
+                >
+                  Estou disponível
+                </button>
+                <button
+                  type="button"
+                  disabled={availabilitySaving || driver?.status === "em_entrega"}
+                  onClick={async () => {
+                    if (!driver) return;
+                    setAvailabilitySaving(true);
+                    try {
+                      await updateCourier(driver.id, { status: "em_entrega", active: true });
+                    } finally {
+                      setAvailabilitySaving(false);
+                    }
+                  }}
+                  className={`rounded-lg px-4 py-3 text-sm font-extrabold disabled:cursor-not-allowed disabled:opacity-70 ${
+                    driver?.status === "em_entrega" ? "bg-amber-500 text-black" : "bg-secondary"
+                  }`}
+                >
+                  Estou indisponível
+                </button>
+              </div>
+            </section>
             {routeOrdersBase.length > 1 && (
               <section className="mb-4 rounded-xl border border-border bg-card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -237,12 +283,12 @@ function DriverPanel() {
                 assignedOrders.map((order) => (
                   <article key={order.id} className="rounded-xl border border-border bg-card p-4">
                     {(() => {
-                      const unit = units.find((item) => item.id === order.unitId);
                       const deliveryLat = order.deliveryLat ?? order.delivery_lat;
                       const deliveryLng = order.deliveryLng ?? order.delivery_lng;
                       const hasDestination = deliveryLat != null && deliveryLng != null;
                       const distanceToDestination = driverDistanceKm(driverLocation, order);
                       const hasArrived = order.status === "arrived";
+                      const isAlreadyInRoute = Boolean(order.navigationStartedAt ?? order.navigation_started_at);
                       const canMarkArrived =
                         order.status === "out_for_delivery" ||
                         order.status === "driver_on_way" ||
@@ -365,13 +411,59 @@ function DriverPanel() {
                               <div className="mt-4 grid gap-2 sm:grid-cols-2">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    startDeliveryNavigation(order.id);
-                                    openNavigation(order, driverLocation);
+                                  onClick={async () => {
+                                    setDeliveryErrorByOrder((current) => ({
+                                      ...current,
+                                      [order.id]: "",
+                                    }));
+                                    if (!hasDestination) {
+                                      setDeliveryErrorByOrder((current) => ({
+                                        ...current,
+                                        [order.id]:
+                                          "Pedido sem latitude/longitude congeladas para rota.",
+                                      }));
+                                      return;
+                                    }
+                                    if (!driverLocation) {
+                                      setDeliveryErrorByOrder((current) => ({
+                                        ...current,
+                                        [order.id]: "GPS do entregador ainda não disponível.",
+                                      }));
+                                      return;
+                                    }
+                                    setSavingActionByOrder((current) => ({
+                                      ...current,
+                                      [order.id]: "navigation",
+                                    }));
+                                    try {
+                                      if (!isAlreadyInRoute) {
+                                        await startDeliveryNavigation(order.id, driverLocation);
+                                      }
+                                      setNavigationOrder(order);
+                                    } catch (error) {
+                                      setDeliveryErrorByOrder((current) => ({
+                                        ...current,
+                                        [order.id]:
+                                          error instanceof Error
+                                            ? error.message
+                                            : "Não foi possível iniciar a rota.",
+                                      }));
+                                    } finally {
+                                      setSavingActionByOrder((current) => ({
+                                        ...current,
+                                        [order.id]: undefined,
+                                      }));
+                                    }
                                   }}
+                                  disabled={savingAction === "navigation"}
                                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-4 text-base font-black text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
-                                  IR <Navigation className="h-5 w-5" />
+                                  {savingAction === "navigation"
+                                    ? "Abrindo..."
+                                    : isAlreadyInRoute
+                                      ? "Abrir rota"
+                                      : "IR"}{" "}
+                                  <Navigation className="h-5 w-5" />
                                 </button>
                                 <button
                                   type="button"
@@ -410,33 +502,10 @@ function DriverPanel() {
                               </div>
 
                               {hasDestination && (
-                                <div className="mt-4">
-                                  <DeliveryRouteMap
-                                    origin={
-                                      driverLocation
-                                        ? {
-                                            latitude: driverLocation.latitude,
-                                            longitude: driverLocation.longitude,
-                                            label: "Você",
-                                            color: "#2563eb",
-                                          }
-                                        : unit
-                                          ? {
-                                              latitude: unit.latitude,
-                                              longitude: unit.longitude,
-                                              label: unit.name,
-                                              color: "#f97316",
-                                            }
-                                          : undefined
-                                    }
-                                    destination={{
-                                      latitude: deliveryLat,
-                                      longitude: deliveryLng,
-                                      label: "Cliente",
-                                      color: "#22c55e",
-                                    }}
-                                  />
-                                </div>
+                                <p className="mt-3 rounded-lg border border-border bg-background p-3 text-xs font-semibold text-muted-foreground">
+                                  Destino fixado: {deliveryLat.toFixed(6)},{" "}
+                                  {deliveryLng.toFixed(6)}
+                                </p>
                               )}
                             </>
                           )}
@@ -503,6 +572,13 @@ function DriverPanel() {
           </>
         )}
       </main>
+      {navigationOrder && driverLocation && (
+        <NavigationChooser
+          order={navigationOrder}
+          driverLocation={driverLocation}
+          onClose={() => setNavigationOrder(null)}
+        />
+      )}
     </div>
   );
 }
@@ -529,6 +605,7 @@ function paymentLabel(order: Order) {
     return "Pix pendente";
   }
   if (order.paymentMethod === "pix_balcao") return "Pix no balcão";
+  if (order.paymentMethod === "local") return "Pagamento no local";
   if (order.paymentMethod === "cartao") return "Cartão";
   if (order.paymentMethod === "dinheiro") return "Dinheiro";
   return order.paymentMethod;
@@ -547,16 +624,6 @@ function getDistanceKm(originLat: number, originLng: number, targetLat: number, 
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
   return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function destinationAddress(order: Order) {
-  return (
-    order.customerAddressText ??
-    order.address ??
-    [order.address_street, order.address_number, order.address_neighborhood]
-      .filter(Boolean)
-      .join(", ")
-  );
 }
 
 function orderDestination(order: Order) {
@@ -591,48 +658,119 @@ function formatDistance(distanceKm: number | null) {
   return `${distanceKm.toFixed(1)} km`;
 }
 
-function openNavigation(
-  order: Order,
-  driverLocation: { latitude: number; longitude: number } | null,
-) {
-  const deliveryLat = order.delivery_lat ?? order.deliveryLat;
-  const deliveryLng = order.delivery_lng ?? order.deliveryLng;
-  const address = destinationAddress(order);
-  const waze =
-    deliveryLat != null && deliveryLng != null
-      ? `https://waze.com/ul?ll=${deliveryLat},${deliveryLng}&navigate=yes`
-      : `https://waze.com/ul?q=${encodeURIComponent(address)}&navigate=yes`;
-  const osm =
-    deliveryLat != null && deliveryLng != null
-      ? `https://www.openstreetmap.org/directions?to=${deliveryLat},${deliveryLng}`
-      : `https://www.openstreetmap.org/search?query=${encodeURIComponent(address)}`;
-  const userAgent = navigator.userAgent.toLowerCase();
-  const isMobile = /android|iphone|ipad|ipod/.test(userAgent);
+type NavigationApp = "google" | "apple" | "waze";
 
+function getDevicePlatform() {
+  const userAgent = navigator.userAgent.toLowerCase();
+  return {
+    isAndroid: /android/.test(userAgent),
+    isIos: /iphone|ipad|ipod/.test(userAgent),
+    isMobile: /android|iphone|ipad|ipod/.test(userAgent),
+  };
+}
+
+function navigationLinks(
+  app: NavigationApp,
+  order: Order,
+  driverLocation: { latitude: number; longitude: number },
+) {
+  const destination = orderDestination(order);
+  if (!destination) throw new Error("Pedido sem latitude/longitude congeladas.");
+  const origin = `${driverLocation.latitude},${driverLocation.longitude}`;
+  const target = `${destination.latitude},${destination.longitude}`;
+  if (app === "apple") {
+    const web = `https://maps.apple.com/?saddr=${origin}&daddr=${target}&dirflg=d`;
+    return { app: web, web };
+  }
+  if (app === "waze") {
+    const web = `https://waze.com/ul?ll=${target}&navigate=yes`;
+    return { app: web, web };
+  }
+  const web = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${target}&travelmode=driving`;
+  return { app: web, web };
+}
+
+function openNavigationApp(
+  app: NavigationApp,
+  order: Order,
+  driverLocation: { latitude: number; longitude: number },
+) {
+  const links = navigationLinks(app, order, driverLocation);
+  const platform = getDevicePlatform();
+  const destination = orderDestination(order);
   console.info("[Maximus][driver][navigation]", {
     pedido: order.id,
-    latitudeEntregador: driverLocation?.latitude,
-    longitudeEntregador: driverLocation?.longitude,
-    latitudeDestino: deliveryLat,
-    longitudeDestino: deliveryLng,
-    enderecoDestino: address,
+    app,
+    latitudeEntregador: driverLocation.latitude,
+    longitudeEntregador: driverLocation.longitude,
+    latitudeDestino: destination?.latitude,
+    longitudeDestino: destination?.longitude,
     distanciaAteDestinoKm: driverDistanceKm(driverLocation, order),
-    metodo: deliveryLat != null && deliveryLng != null ? "coordenadas_pedido" : "endereco",
-    wazeUrl: waze,
-    fallbackOsmUrl: osm,
+    metodo: "coordenadas_pedido",
+    url: links.web,
   });
 
-  if (!isMobile) {
-    window.open(waze, "_blank", "noopener,noreferrer");
+  if (!platform.isMobile) {
+    window.open(links.web, "_blank", "noopener,noreferrer");
     return;
   }
 
-  window.location.href = waze;
+  window.location.href = links.app;
   window.setTimeout(() => {
     if (document.visibilityState === "visible") {
-      window.location.href = osm;
+      window.location.href = links.web;
     }
   }, 1400);
+}
+
+function NavigationChooser({
+  order,
+  driverLocation,
+  onClose,
+}: {
+  order: Order;
+  driverLocation: { latitude: number; longitude: number };
+  onClose: () => void;
+}) {
+  const platform = getDevicePlatform();
+  const apps: Array<{ key: NavigationApp; label: string }> = [
+    { key: "google", label: "Google Maps" },
+    ...(platform.isAndroid || !platform.isMobile ? [] : [{ key: "apple" as const, label: "Apple Maps" }]),
+    { key: "waze", label: "Waze" },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
+      <div className="admin-root w-full max-w-sm rounded-xl border border-border bg-card p-5 font-sora shadow-xl">
+        <h2 className="text-lg font-black">Abrir rota</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Pedido #{order.number} · escolha o aplicativo.
+        </p>
+        <div className="mt-4 grid gap-2">
+          {apps.map((app) => (
+            <button
+              key={app.key}
+              type="button"
+              onClick={() => {
+                openNavigationApp(app.key, order, driverLocation);
+                onClose();
+              }}
+              className="rounded-lg bg-primary px-4 py-3 text-sm font-extrabold text-primary-foreground"
+            >
+              {app.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg bg-secondary px-4 py-3 text-sm font-bold"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function isToday(iso?: string) {

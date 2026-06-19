@@ -1,4 +1,13 @@
-export type FoodVariant = "burger" | "churrasco" | "petiscos" | "bebidas" | "chopp" | "plate";
+export type FoodVariant =
+  | "burger"
+  | "churrasco"
+  | "petiscos"
+  | "bebidas"
+  | "chopp"
+  | "plate"
+  | "sobremesas"
+  | "sucos"
+  | "refrigerantes";
 
 export type OptionGroupType = "single" | "multiple";
 
@@ -120,8 +129,9 @@ export interface OrderInfo {
     | "customer_reported_paid"
     | "confirmed"
     | "rejected"
-    | "pending_on_delivery";
-  paymentMethod?: "pix_app" | "pix_entrega" | "cartao" | "dinheiro";
+    | "pending_on_delivery"
+    | "paid_on_delivery";
+  paymentMethod?: "pix_app" | "pix_entrega" | "cartao" | "dinheiro" | "local";
   table?: string;
   customerName?: string;
   customerPhone?: string;

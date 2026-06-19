@@ -105,21 +105,33 @@ export function ProductCard({ product }: { product: Product }) {
         ) : (
           <FoodArt
             variant={product.svg}
-            className="h-full w-full p-4 transition-transform duration-300 group-hover:scale-110"
+            className="h-full w-full p-2 transition-transform duration-300 group-hover:scale-110 sm:p-4"
           />
         )}
       </div>
-      <div className="flex flex-1 flex-col p-4">
-        <h3 className="font-bold leading-tight tracking-tight">{product.name}</h3>
-        <p className="mt-1 line-clamp-2 flex-1 text-sm text-muted-foreground">
-          {product.description}
-        </p>
-        <div className="mt-3 flex items-center justify-between gap-2">
-          <span className="text-lg font-extrabold text-primary">{formatPrice(product.price)}</span>
+      <div className="flex flex-1 flex-col p-2 sm:p-4">
+        <h3 className="line-clamp-2 min-h-8 text-xs font-bold leading-4 tracking-tight sm:min-h-0 sm:text-base sm:leading-tight">
+          {product.name}
+        </h3>
+        {product.description && (
+          <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-muted-foreground sm:flex-1 sm:text-sm">
+            {product.description}
+          </p>
+        )}
+        <div className="mt-2 flex items-center justify-between gap-1.5 sm:mt-3 sm:gap-2">
+          <span className="truncate text-xs font-extrabold text-primary sm:text-lg">
+            {formatPrice(product.price)}
+          </span>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button size="sm" onClick={resetForm}>
-                <Plus className="mr-1 h-4 w-4" /> Adicionar
+              <Button
+                size="sm"
+                onClick={resetForm}
+                className="h-7 min-w-7 px-2 text-[11px] sm:h-9 sm:px-3 sm:text-sm"
+                aria-label={`Adicionar ${product.name}`}
+              >
+                <Plus className="h-3.5 w-3.5 sm:mr-1 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">Adicionar</span>
               </Button>
             </DialogTrigger>
             <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">

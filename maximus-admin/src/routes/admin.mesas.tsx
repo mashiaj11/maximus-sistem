@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import { TABLE_STATUS_LABELS } from "@/admin/data/tables";
 import type { RestaurantTable, TableStatus } from "@/admin/data/types";
+import { desktopPrintHtml } from "@/admin/printing";
 import { buildTablePublicUrl, normalizePublicAppUrl } from "@/admin/supabase-data";
 import { useAdmin } from "@/admin/store";
 
@@ -48,12 +49,10 @@ function downloadTableQr(table: RestaurantTable) {
   URL.revokeObjectURL(url);
 }
 
-function printTableQr(table: RestaurantTable, unitName: string, tableUrl: string) {
+async function printTableQr(table: RestaurantTable, unitName: string, tableUrl: string) {
   if (typeof window === "undefined") return;
   const qr = document.querySelector(`[data-table-qr="${table.id}"] svg`)?.outerHTML;
-  const printWindow = window.open("", "_blank", "width=520,height=720");
-  if (!printWindow) return;
-  printWindow.document.write(`
+  const html = `
     <!doctype html>
     <html>
       <head>
@@ -83,8 +82,22 @@ function printTableQr(table: RestaurantTable, unitName: string, tableUrl: string
         <script>window.print();</script>
       </body>
     </html>
-  `);
-  printWindow.document.close();
+  `;
+  const settings = await window.maximusDesktop?.getPrintSettings();
+  const printer =
+    settings?.printers.find(
+      (item) => item.unitId === table.unitId && item.destination === "cashier" && item.enabled,
+    ) ??
+    settings?.printers.find((item) => item.unitId === table.unitId && item.enabled) ??
+    undefined;
+  const result = await desktopPrintHtml(html, printer, {
+    tableId: table.id,
+    tableNumber: table.number,
+    destination: printer?.destination ?? "cashier",
+    unitId: table.unitId,
+    manual: true,
+  });
+  if (!result.ok) throw new Error(result.error ?? "Não foi possível imprimir o QR Code.");
 }
 
 function MesasPage() {
@@ -252,7 +265,15 @@ function MesasPage() {
                       toast.error("Configure a URL pública do sistema antes de imprimir o QR.");
                       return;
                     }
-                    printTableQr(table, selectedUnit?.name ?? "Maximus", tableUrl);
+                    printTableQr(table, selectedUnit?.name ?? "Maximus", tableUrl).catch(
+                      (error) => {
+                        toast.error(
+                          error instanceof Error
+                            ? error.message
+                            : "Não foi possível imprimir o QR Code.",
+                        );
+                      },
+                    );
                   }}
                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground"
                 >

@@ -6,7 +6,7 @@ import { PageHeader } from "@/admin/components/AdminLayout";
 import { TypeBadge } from "@/admin/components/Badges";
 import { STATUS_LABELS, isFinalStatus } from "@/admin/data/statuses";
 import type { Order } from "@/admin/data/types";
-import { openOrderReceiptPrintWindow, printOrderReceipt } from "@/admin/printing";
+import { buildCashierReceiptHtml, printRenderedHtml } from "@/admin/printing";
 import {
   PAYMENT_METHOD_LABELS,
   formatBRL,
@@ -54,12 +54,33 @@ function driverName(order: Order) {
   return order.deliveryDriverName ?? order.courierName;
 }
 
+async function printFinishedReceipt(
+  order: Order,
+  unit: ReturnType<typeof useAdmin>["selectedUnit"],
+) {
+  const settings = await window.maximusDesktop?.getPrintSettings();
+  const printer =
+    settings?.printers.find(
+      (item) => item.unitId === order.unitId && item.destination === "cashier" && item.enabled,
+    ) ?? undefined;
+  const html = buildCashierReceiptHtml(order, unit, order.items, printer?.paperWidth);
+  const result = await printRenderedHtml(html, printer, {
+    orderId: order.id,
+    orderNumber: order.number,
+    destination: "cashier",
+    unitId: order.unitId,
+    manual: true,
+  });
+  if (!result.ok) throw new Error(result.error ?? "Não foi possível imprimir o comprovante.");
+}
+
 function FinalizadosPage() {
   const { orders, selectedUnit, units } = useAdmin();
   const [period, setPeriod] = useState<PeriodKey>("today");
   const [customStart, setCustomStart] = useState(todayInputValue());
   const [customEnd, setCustomEnd] = useState(todayInputValue());
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [printingOrderId, setPrintingOrderId] = useState<string | null>(null);
   const finishedOrders = [...orders]
     .filter((order) => isFinalStatus(order.status))
     .filter((order) => isInPeriod(finishedAt(order), period, customStart, customEnd))
@@ -161,15 +182,27 @@ function FinalizadosPage() {
                   <div className="mt-4">
                     <button
                       type="button"
+                      disabled={printingOrderId === order.id}
                       onClick={() => {
-                        const printWindow = openOrderReceiptPrintWindow();
+                        setPrintingOrderId(order.id);
                         try {
-                          printOrderReceipt(
+                          void printFinishedReceipt(
                             order,
                             units.find((unit) => unit.id === order.unitId) ?? selectedUnit,
-                            printWindow,
-                          );
+                          )
+                            .then(() => {
+                              toast.success("Comprovante reenviado para impressão.");
+                            })
+                            .catch((error) => {
+                              toast.error(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Não foi possível imprimir o comprovante.",
+                              );
+                            })
+                            .finally(() => setPrintingOrderId(null));
                         } catch (error) {
+                          setPrintingOrderId(null);
                           toast.error(
                             error instanceof Error
                               ? error.message
@@ -177,10 +210,10 @@ function FinalizadosPage() {
                           );
                         }
                       }}
-                      className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-extrabold text-primary-foreground hover:bg-primary/90"
+                      className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-extrabold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                     >
                       <Printer className="h-4 w-4" />
-                      Imprimir comprovante
+                      {printingOrderId === order.id ? "Reimprimindo..." : "Imprimir comprovante"}
                     </button>
                   </div>
                   <div className="mt-4 rounded-lg border border-border bg-background p-3">

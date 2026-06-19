@@ -3,7 +3,7 @@
 export type OrderType = "delivery" | "mesa" | "levar" | "balcao";
 export type UnitId = string;
 
-export type PaymentMethod = "pix_app" | "pix_balcao" | "cartao" | "dinheiro";
+export type PaymentMethod = "pix_app" | "pix_balcao" | "cartao" | "dinheiro" | "local";
 
 export type PaymentStatus = "pending" | "customer_reported_paid" | "confirmed" | "rejected";
 
@@ -24,11 +24,13 @@ export type OrderStatus =
 
 export interface OrderItem {
   id: string;
+  productId?: string;
   name: string;
   quantity: number;
   unitPrice: number;
   customizations: string[];
   notes?: string;
+  printDestination?: PrintDestination;
 }
 
 export interface Order {
@@ -178,7 +180,12 @@ export interface Category {
   order: number;
   activeByUnit: Record<UnitId, boolean>;
   availabilityScope?: "all" | "dine_in_only" | "delivery_only" | "takeaway_only";
+  printDestination?: PrintDestination;
 }
+
+export type PrintDestination = "kitchen" | "cashier" | "bar" | "none";
+export type PrintJobStatus = "pending" | "processing" | "printed" | "failed" | "simulated" | "cancelled";
+export type PrintJobDestination = "kitchen" | "cashier" | "bar" | "custom";
 
 export type TableStatus = "livre" | "ocupada" | "pedido_ativo";
 

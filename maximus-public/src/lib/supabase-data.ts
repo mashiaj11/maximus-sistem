@@ -208,10 +208,15 @@ function normalizePhone(phone: string) {
 
 function slugToVariant(slug: string): FoodVariant {
   if (slug.includes("churrasco")) return "churrasco";
-  if (slug.includes("petisco")) return "petiscos";
+  if (slug.includes("petisco") || slug.includes("entrada") || slug.includes("aperitivo"))
+    return "petiscos";
+  if (slug.includes("sobremesa") || slug.includes("doce") || slug.includes("pudim"))
+    return "sobremesas";
+  if (slug.includes("suco")) return "sucos";
+  if (slug.includes("refrigerante") || slug.includes("refri")) return "refrigerantes";
   if (slug.includes("bebida")) return "bebidas";
   if (slug.includes("chopp")) return "chopp";
-  if (slug.includes("executivo")) return "plate";
+  if (slug.includes("executivo") || slug.includes("prato")) return "plate";
   return "burger";
 }
 
@@ -987,11 +992,13 @@ function orderTypeForMode(mode: OrderTrackMode): "delivery" | "dine_in" | "takea
 
 function paymentStatusForOrder(status?: OrderInfo["paymentStatus"]) {
   if (status === "pending_on_delivery") return "paid_on_delivery";
+  if (status === "paid_on_delivery") return "paid_on_delivery";
   return status ?? "pending";
 }
 
 function paymentMethodForOrder(method?: OrderInfo["paymentMethod"]) {
   if (method === "pix_entrega") return "pix_balcao";
+  if (method === "local") return "local";
   return method ?? "pix_app";
 }
 

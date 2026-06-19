@@ -1,5 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   ClipboardList,
@@ -10,13 +10,17 @@ import {
   Truck,
   MapPinned,
   LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { isFinalStatus } from "@/admin/data/statuses";
 import { isPaymentPending, useAdmin } from "@/admin/store";
 import type { AdminUnit } from "@/admin/data/types";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const logoUrl = "/branding/maximus-logo.png";
+const SIDEBAR_COLLAPSED_KEY = "maximus-admin-sidebar-collapsed";
 
 const NAV = [
   { to: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
@@ -68,6 +72,14 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
   const [pinUnit, setPinUnit] = useState<AdminUnit | null>(null);
   const [pin, setPin] = useState("");
   const [checkingPin, setCheckingPin] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
 
   const activeOrders = orders.filter((o) => !isFinalStatus(o.status)).length;
   const pendingPayments = orders.filter(isPaymentPending).length;
@@ -78,6 +90,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
     return null;
   };
 
+  const isPedidosArea = location.pathname === "/admin/pedidos" || location.pathname.startsWith("/admin/pedidos/");
   const isActive = (to: string, exact?: boolean) =>
     exact
       ? location.pathname === to
@@ -207,65 +220,152 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
     >
       <div className="flex min-h-screen">
         {/* Sidebar */}
-        <aside className="hidden md:flex w-64 flex-col border-r border-border bg-card sticky top-0 h-screen shadow-sm">
-          <div className="border-b border-border px-5 py-5">
-            <LogoMark src={logoUrl} className="h-14 w-14" />
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-extrabold">{selectedUnit.name}</p>
-                <p className="text-[11px] uppercase tracking-widest text-muted-foreground">
-                  Unidade atual
-                </p>
-              </div>
-              <button
-                onClick={clearSelectedUnit}
-                className="shrink-0 rounded-md bg-secondary px-2.5 py-1 text-xs font-bold hover:bg-accent"
-              >
-                Trocar
-              </button>
-            </div>
-          </div>
-          <nav className="flex-1 p-3 space-y-1">
-            {NAV.map(({ to, label, icon: Icon, exact }) => (
-              <Link
-                key={to}
-                to={to}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                  isActive(to, exact)
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+        <aside
+          className={`sticky top-0 hidden h-screen flex-col border-r border-border bg-card shadow-sm transition-[width] duration-200 ease-out md:flex ${
+            isSidebarCollapsed ? "w-20" : "w-64"
+          }`}
+        >
+          <TooltipProvider delayDuration={150}>
+            <div
+              className={`border-b border-border py-4 ${
+                isSidebarCollapsed ? "px-3" : "px-5"
+              }`}
+            >
+              <div
+                className={`flex items-center gap-3 ${
+                  isSidebarCollapsed ? "justify-center" : "justify-between"
                 }`}
               >
-                <Icon className="h-[18px] w-[18px]" />
-                <span className="flex-1">{label}</span>
-                {navCount(to) != null && (
-                  <span className="rounded-md bg-background/70 px-2 py-0.5 text-xs font-bold text-foreground">
-                    {navCount(to)}
-                  </span>
-                )}
-              </Link>
-            ))}
-          </nav>
-          <div className="p-4 text-[11px] text-muted-foreground border-t border-border">
-            <div className="mb-3 min-w-0">
-              <p className="truncate font-bold text-foreground">{profile?.fullName}</p>
-              <p className="uppercase tracking-widest">{profile?.role}</p>
+                <LogoMark
+                  src={logoUrl}
+                  className={isSidebarCollapsed ? "h-9 w-9" : "h-14 w-14"}
+                />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setIsSidebarCollapsed((current) => !current)}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      aria-label={isSidebarCollapsed ? "Expandir sidebar" : "Recolher sidebar"}
+                    >
+                      {isSidebarCollapsed ? (
+                        <PanelLeftOpen className="h-4 w-4" />
+                      ) : (
+                        <PanelLeftClose className="h-4 w-4" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    {isSidebarCollapsed ? "Expandir sidebar" : "Recolher sidebar"}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              {!isSidebarCollapsed && (
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-extrabold">{selectedUnit.name}</p>
+                    <p className="text-[11px] uppercase tracking-widest text-muted-foreground">
+                      Unidade atual
+                    </p>
+                  </div>
+                  <button
+                    onClick={clearSelectedUnit}
+                    className="shrink-0 rounded-md bg-secondary px-2.5 py-1 text-xs font-bold hover:bg-accent"
+                  >
+                    Trocar
+                  </button>
+                </div>
+              )}
             </div>
-            <div className="flex items-center justify-between">
-              <span>Pix pendentes</span>
-              <span className="rounded-md bg-primary/15 px-2 py-0.5 font-bold text-primary">
-                {pendingPayments}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => void signOut()}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-md bg-secondary px-3 py-2 text-xs font-bold text-foreground hover:bg-accent"
+            <nav className={`flex-1 space-y-1 ${isSidebarCollapsed ? "p-3" : "p-3"}`}>
+              {NAV.map(({ to, label, icon: Icon, exact }) => {
+                const count = navCount(to);
+
+                return (
+                  <Tooltip key={to}>
+                    <TooltipTrigger asChild>
+                      <Link
+                        to={to}
+                        aria-label={label}
+                        className={`relative flex items-center rounded-lg text-sm font-medium transition-colors ${
+                          isSidebarCollapsed
+                            ? "h-11 justify-center px-0"
+                            : "gap-3 px-3 py-2.5"
+                        } ${
+                          isActive(to, exact)
+                            ? "bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        }`}
+                      >
+                        <Icon className="h-[18px] w-[18px] shrink-0" />
+                        {!isSidebarCollapsed && <span className="flex-1 truncate">{label}</span>}
+                        {count != null && (
+                          <span
+                            className={`rounded-md bg-background/70 text-xs font-bold text-foreground ${
+                              isSidebarCollapsed
+                                ? "absolute right-1 top-1 min-w-5 px-1 py-0 text-center text-[10px]"
+                                : "px-2 py-0.5"
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        )}
+                      </Link>
+                    </TooltipTrigger>
+                    {isSidebarCollapsed && <TooltipContent side="right">{label}</TooltipContent>}
+                  </Tooltip>
+                );
+              })}
+            </nav>
+            <div
+              className={`border-t border-border text-[11px] text-muted-foreground ${
+                isSidebarCollapsed ? "p-3" : "p-4"
+              }`}
             >
-              <LogOut className="h-3.5 w-3.5" />
-              Sair
-            </button>
-          </div>
+              {!isSidebarCollapsed && (
+                <>
+                  <div className="mb-3 min-w-0">
+                    <p className="truncate font-bold text-foreground">{profile?.fullName}</p>
+                    <p className="uppercase tracking-widest">{profile?.role}</p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Pix pendentes</span>
+                    <span className="rounded-md bg-primary/15 px-2 py-0.5 font-bold text-primary">
+                      {pendingPayments}
+                    </span>
+                  </div>
+                </>
+              )}
+              {isSidebarCollapsed && pendingPayments > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="mb-2 flex justify-center">
+                      <span className="rounded-md bg-primary/15 px-2 py-0.5 text-xs font-bold text-primary">
+                        {pendingPayments}
+                      </span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Pix pendentes</TooltipContent>
+                </Tooltip>
+              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => void signOut()}
+                    className={`flex items-center justify-center rounded-md bg-secondary text-xs font-bold text-foreground hover:bg-accent ${
+                      isSidebarCollapsed ? "h-10 w-full p-0" : "mt-3 w-full gap-2 px-3 py-2"
+                    }`}
+                    aria-label="Sair"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    {!isSidebarCollapsed && "Sair"}
+                  </button>
+                </TooltipTrigger>
+                {isSidebarCollapsed && <TooltipContent side="right">Sair</TooltipContent>}
+              </Tooltip>
+            </div>
+          </TooltipProvider>
         </aside>
 
         {/* Main */}
@@ -312,7 +412,13 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
               </Link>
             ))}
           </nav>
-          <main className="flex-1 p-4 md:p-8 max-w-[1400px] w-full mx-auto">{children}</main>
+          <main
+            className={`flex-1 w-full ${
+              isPedidosArea ? "p-3 md:p-4 xl:p-5" : "mx-auto max-w-[1400px] p-4 md:p-8"
+            }`}
+          >
+            {children}
+          </main>
         </div>
       </div>
     </div>

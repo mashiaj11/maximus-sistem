@@ -1,11 +1,14 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
+import { useState } from "react";
 import { ArrowLeft, MapPin, Utensils, Check, Printer, X } from "lucide-react";
+import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import { StatusBadge, TypeBadge, PaymentBadge } from "@/admin/components/Badges";
 import { DeliveryRouteMap } from "@/admin/components/MapView";
 import { useAdmin, formatBRL, formatTime } from "@/admin/store";
 import { STATUS_FLOW, STATUS_LABELS } from "@/admin/data/statuses";
-import { buildKitchenTicket } from "@/admin/printing";
+import { buildKitchenReceiptHtml, printRenderedHtml } from "@/admin/printing";
+import type { AdminUnit, Order } from "@/admin/data/types";
 
 export const Route = createFileRoute("/admin/pedidos/$id")({
   component: PedidoDetalhePage,
@@ -15,6 +18,7 @@ export const Route = createFileRoute("/admin/pedidos/$id")({
 const PAYMENT_LABELS: Record<string, string> = {
   pix_app: "Pix pelo app",
   pix_balcao: "Pix no balcão",
+  local: "Pagamento no local",
   cartao: "Cartão",
   dinheiro: "Dinheiro",
 };
@@ -43,20 +47,28 @@ function getDistanceKm(originLat: number, originLng: number, targetLat: number, 
   return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function printManualTicket(order: ReturnType<typeof useAdmin>["orders"][number]) {
+async function printManualTicket(order: Order, unit?: AdminUnit | null) {
   if (typeof window === "undefined") return;
-  const printWindow = window.open("", "_blank", "width=420,height=720");
-  if (!printWindow) return;
-  printWindow.document.open();
-  printWindow.document.write(buildKitchenTicket(order));
-  printWindow.document.close();
-  printWindow.focus();
-  window.setTimeout(() => printWindow.print(), 150);
+  const settings = await window.maximusDesktop?.getPrintSettings();
+  const printer =
+    settings?.printers.find(
+      (item) => item.unitId === order.unitId && item.destination === "kitchen" && item.enabled,
+    ) ?? undefined;
+  const html = buildKitchenReceiptHtml(order, unit, order.items, "kitchen", printer?.paperWidth);
+  const result = await printRenderedHtml(html, printer, {
+    orderId: order.id,
+    orderNumber: order.number,
+    destination: "kitchen",
+    unitId: order.unitId,
+    manual: true,
+  });
+  if (!result.ok) throw new Error(result.error ?? "Não foi possível imprimir a comanda.");
 }
 
 function PedidoDetalhePage() {
   const { id } = useParams({ from: "/admin/pedidos/$id" });
   const { orders, units, updateStatus, setPayment } = useAdmin();
+  const [reprinting, setReprinting] = useState(false);
   const order = orders.find((o) => o.id === id);
 
   if (!order) {
@@ -176,11 +188,27 @@ function PedidoDetalhePage() {
               </p>
             )}
             <button
-              onClick={() => printManualTicket(order)}
-              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm font-bold hover:bg-accent"
+              disabled={reprinting}
+              onClick={() => {
+                setReprinting(true);
+                printManualTicket(order, unit)
+                  .then(() => {
+                    toast.success("Comanda reenviada para impressão.");
+                  })
+                  .catch((error) => {
+                    console.error("[Maximus][print] Falha na reimpressao", error);
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Não foi possível reimprimir a comanda.",
+                    );
+                  })
+                  .finally(() => setReprinting(false));
+              }}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm font-bold hover:bg-accent disabled:opacity-50"
             >
               <Printer className="h-4 w-4" />
-              Reimprimir
+              {reprinting ? "Reimprimindo..." : "Reimprimir"}
             </button>
           </div>
         </div>

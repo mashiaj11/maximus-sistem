@@ -104,6 +104,18 @@ function CheckoutMesaPage() {
   const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null);
   const allUnitsClosed = units.length > 0 && units.every((item) => !item.isOpen);
 
+  useEffect(() => {
+    if (!effectiveTable) return;
+    navigate({
+      to: "/mesa",
+      search: {
+        ...(effectiveUnit ? { unit: effectiveUnit } : {}),
+        table: effectiveTable,
+      },
+      replace: true,
+    });
+  }, [effectiveTable, effectiveUnit, navigate]);
+
   // ── Bootstrap customer profile ──────────────────────────────────────────
   useEffect(() => {
     const local = getSavedCustomerProfile();

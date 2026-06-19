@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Minus, Pencil, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -24,8 +24,9 @@ import { FoodArt } from "./FoodArt";
 import { OptionGroupField } from "./ProductCard";
 import { formatPrice } from "@/lib/format";
 import { useCart } from "@/lib/store";
+import { createOrderInSupabase, findPublicTable, loadPublicMenu } from "@/lib/supabase-data";
 import { calculateUnitPrice, getSelectionErrors } from "@/lib/cart-customization";
-import type { CartItem, SelectedOptions } from "@/lib/types";
+import type { CartItem, OrderInfo, SelectedOptions } from "@/lib/types";
 
 export function CartDrawer({
   checkoutSearch,
@@ -38,8 +39,15 @@ export function CartDrawer({
     mode?: string;
   };
 }) {
-  const { items, inc, dec, removeItem, subtotal, count, orderContext } = useCart();
+  const { items, inc, dec, removeItem, subtotal, count, orderContext, clearItems } = useCart();
   const [open, setOpen] = useState(false);
+  const [submittingMesaOrder, setSubmittingMesaOrder] = useState(false);
+  const [mesaSuccess, setMesaSuccess] = useState<{
+    number: number;
+    table: string;
+    unit?: string;
+  } | null>(null);
+  const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const effectiveCheckoutSearch = useMemo(() => {
     const unit = checkoutSearch?.unidade ?? checkoutSearch?.unit ?? orderContext?.unit;
@@ -51,6 +59,12 @@ export function CartDrawer({
       ...(mode ? { mode } : {}),
     };
   }, [checkoutSearch, orderContext]);
+  const isMesaQrFlow =
+    pathname === "/mesa" &&
+    effectiveCheckoutSearch.mode === "dine_in" &&
+    Boolean(effectiveCheckoutSearch.unit) &&
+    Boolean(effectiveCheckoutSearch.table);
+  const displayMesa = formatMesa(effectiveCheckoutSearch.table);
 
   useEffect(() => {
     function openCart() {
@@ -60,6 +74,100 @@ export function CartDrawer({
     window.addEventListener("maximus:open-cart", openCart);
     return () => window.removeEventListener("maximus:open-cart", openCart);
   }, []);
+
+  async function submitMesaOrder() {
+    if (submittingMesaOrder || !isMesaQrFlow || items.length === 0) return;
+
+    const unitParam = effectiveCheckoutSearch.unit;
+    const tableParam = effectiveCheckoutSearch.table;
+    if (!unitParam || !tableParam) {
+      toast.error("Mesa não identificada. Escaneie novamente o QR Code.");
+      return;
+    }
+
+    setSubmittingMesaOrder(true);
+    try {
+      const data = await loadPublicMenu(unitParam, "dine_in");
+      const unit = data.units.find((item) => item.slug === unitParam || item.id === unitParam);
+      if (!unit) throw new Error("Não foi possível identificar a unidade do pedido.");
+      if (!unit.isOpen) throw new Error("A unidade selecionada está fechada no momento.");
+
+      const publicTable = await findPublicTable(unit.slug, tableParam);
+      if (!publicTable?.id) {
+        throw new Error("Mesa não encontrada. Escaneie novamente o QR Code.");
+      }
+
+      const tableLabel = formatMesa(tableParam);
+      const draft: Omit<OrderInfo, "id" | "createdAt"> = {
+        mode: "mesa",
+        total: subtotal,
+        paymentStatus: "paid_on_delivery",
+        paymentMethod: "local",
+        table: tableLabel,
+        customerName: undefined,
+        customerPhone: undefined,
+        customerId: undefined,
+        recipientName: undefined,
+        recipientPhone: undefined,
+        recipientNotes: undefined,
+        address: undefined,
+        items: items.map((item) => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          total: item.unitPrice * item.quantity,
+        })),
+        unitId: unit.id,
+        unitSlug: unit.slug,
+        unitName: unit.name,
+        unitLat: unit.latitude,
+        unitLng: unit.longitude,
+        deliveryDistanceKm: null,
+        deliveryFee: 0,
+        deliveryRangeId: null,
+        minimumOrderValue: 0,
+        deliveryLat: undefined,
+        deliveryLng: undefined,
+        deliveryLocationSource: "manual_unavailable",
+        geocodingStatus: "not_needed",
+        customerLat: undefined,
+        customerLng: undefined,
+        customerAddressText: undefined,
+      };
+
+      const saved = await createOrderInSupabase({
+        order: draft,
+        cartItems: items,
+        customerId: undefined,
+        addressId: undefined,
+        unitId: unit.id,
+        tableId: publicTable.id,
+        deliveryFee: 0,
+        deliveryDistanceKm: null,
+        deliveryRangeId: null,
+      });
+
+      clearItems();
+      setMesaSuccess({ number: saved.number, table: tableLabel, unit: unit.name });
+      toast.success("Pedido enviado!");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível enviar o pedido.");
+    } finally {
+      setSubmittingMesaOrder(false);
+    }
+  }
+
+  function orderAgain() {
+    clearItems();
+    setMesaSuccess(null);
+    setOpen(false);
+    navigate({
+      to: "/mesa",
+      search: {
+        ...(effectiveCheckoutSearch.unit ? { unit: effectiveCheckoutSearch.unit } : {}),
+        ...(effectiveCheckoutSearch.table ? { table: effectiveCheckoutSearch.table } : {}),
+      },
+    });
+  }
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -79,7 +187,30 @@ export function CartDrawer({
           <SheetTitle>Ver sacola</SheetTitle>
         </SheetHeader>
 
-        {items.length === 0 ? (
+        {mesaSuccess ? (
+          <div className="flex flex-1 flex-col items-center justify-center px-2 py-8 text-center">
+            <div className="max-w-xs">
+              <p className="text-2xl font-black leading-tight text-primary">
+                Seu pedido foi enviado com sucesso!
+              </p>
+              <p className="mt-3 text-lg font-extrabold">Você é o Máximo!</p>
+              <div className="mt-5 rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+                <p className="font-bold text-foreground">Pedido #{mesaSuccess.number}</p>
+                <p className="mt-1">Mesa {mesaSuccess.table}</p>
+                <p className="mt-3">Nossa equipe já recebeu seu pedido.</p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="mt-5"
+                onClick={orderAgain}
+              >
+                Pedir novamente
+              </Button>
+            </div>
+          </div>
+        ) : items.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground">
             <ShoppingBag className="h-10 w-10" />
             <p>Sua sacola está vazia.</p>
@@ -159,17 +290,36 @@ export function CartDrawer({
 
         <SheetFooter className="border-t border-border pt-4">
           <div className="w-full space-y-3">
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span>Subtotal</span>
-              <span>{formatPrice(subtotal)}</span>
-            </div>
-            <div className="flex items-center justify-between text-lg font-extrabold">
-              <span>Total</span>
-              <span className="text-primary">{formatPrice(subtotal)}</span>
-            </div>
-            {items.length === 0 ? (
+            {isMesaQrFlow && !mesaSuccess && (
+              <div className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-xs font-semibold text-primary">
+                Pedido direto para Mesa {displayMesa}. Pagamento no local.
+              </div>
+            )}
+            {!mesaSuccess && (
+              <>
+                <div className="flex items-center justify-between text-sm text-muted-foreground">
+                  <span>Subtotal</span>
+                  <span>{formatPrice(subtotal)}</span>
+                </div>
+                <div className="flex items-center justify-between text-lg font-extrabold">
+                  <span>Total</span>
+                  <span className="text-primary">{formatPrice(subtotal)}</span>
+                </div>
+              </>
+            )}
+            {mesaSuccess ? null : items.length === 0 ? (
               <Button disabled className="w-full bg-gradient-primary font-bold" size="lg">
-                Finalizar pedido
+                {isMesaQrFlow ? "Enviar pedido" : "Finalizar pedido"}
+              </Button>
+            ) : isMesaQrFlow ? (
+              <Button
+                type="button"
+                className="w-full bg-gradient-primary font-bold"
+                size="lg"
+                disabled={submittingMesaOrder}
+                onClick={submitMesaOrder}
+              >
+                {submittingMesaOrder ? "Enviando pedido..." : "Enviar pedido"}
               </Button>
             ) : effectiveCheckoutSearch.mesa || effectiveCheckoutSearch.table ? (
               <Button asChild className="w-full bg-gradient-primary font-bold" size="lg">
@@ -201,6 +351,12 @@ export function CartDrawer({
       )}
     </Sheet>
   );
+}
+
+function formatMesa(value?: string) {
+  if (!value) return "";
+  const number = Number(value);
+  return Number.isFinite(number) ? String(number).padStart(2, "0") : value;
 }
 
 function EditCartItemDialog({ item }: { item: CartItem }) {

@@ -1,13 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Copy, Printer, Save, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Copy,
+  FolderOpen,
+  Plus,
+  Printer,
+  RefreshCw,
+  Save,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import type {
   AdminUnit,
   BusinessHour,
   KitchenPrintSettings,
-  KitchenPrinterType,
   UnitTheme,
   WeekdayKey,
   WhatsappMessageSettings,
@@ -15,7 +23,6 @@ import type {
   WhatsappStatusSettings,
   WhatsappStatusMessages,
 } from "@/admin/data/types";
-import { printKitchenTest } from "@/admin/printing";
 import { useAdmin } from "@/admin/store";
 
 export const Route = createFileRoute("/admin/configuracoes")({
@@ -39,12 +46,6 @@ const DEFAULT_KITCHEN_PRINT_SETTINGS: KitchenPrintSettings = {
   printerPort: 9100,
   printerType: "escpos",
   copies: 1,
-};
-
-const PRINTER_TYPE_LABELS: Record<KitchenPrinterType, string> = {
-  escpos: "ESC/POS",
-  thermal_generic: "Térmica genérica",
-  a4: "A4",
 };
 
 const DEFAULT_WHATSAPP_SETTINGS: WhatsappMessageSettings = {
@@ -102,6 +103,25 @@ const WHATSAPP_STATUS_CARD_COLORS = [
   "border-red-500/30 bg-red-500/10",
 ];
 
+const TEST_PRINT_HTML =
+  "<html><body><main style='font-family:Arial;padding:8px'><h1>MAXIMUS</h1><p>Teste de impressão nativa</p></main></body></html>";
+
+const CONNECTION_MODE_LABELS: Record<
+  NonNullable<MaximusPrinterConfig["connectionMode"]>,
+  string
+> = {
+  system: "Impressora instalada no sistema",
+  network: "Impressora de rede direta",
+};
+
+const NETWORK_PROTOCOL_LABELS: Record<
+  NonNullable<MaximusPrinterConfig["networkProtocol"]>,
+  string
+> = {
+  raw: "RAW 9100",
+  escpos: "ESC/POS",
+};
+
 function timeToMinutes(value: string) {
   const [hours, minutes] = value.split(":").map(Number);
   if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0;
@@ -155,6 +175,47 @@ function copyText(text: string) {
   }
 }
 
+function normalizePrinterConfig(printer: MaximusPrinterConfig): MaximusPrinterConfig {
+  const connectionMode = printer.connectionMode ?? "system";
+  return {
+    ...printer,
+    connectionMode,
+    networkPort: Math.max(1, Number(printer.networkPort ?? 9100)),
+    networkProtocol: printer.networkProtocol ?? "raw",
+  };
+}
+
+function normalizePrintSettings(settings: MaximusPrintSettings): MaximusPrintSettings {
+  return {
+    version: settings.version || 1,
+    printers: Array.isArray(settings.printers)
+      ? settings.printers.map((printer) => normalizePrinterConfig(printer))
+      : [],
+  };
+}
+
+function getPrinterStatus(
+  printer: MaximusPrinterConfig,
+  detectedPrinters: Array<{
+    name: string;
+    displayName?: string;
+    status?: number;
+    isDefault?: boolean;
+  }>,
+) {
+  if (!printer.enabled) return { label: "desativada", className: "bg-muted text-muted-foreground" };
+  if (printer.simulate) return { label: "pronta", className: "bg-emerald-500/15 text-emerald-300" };
+  if ((printer.connectionMode ?? "system") === "network") {
+    return { label: "erro", className: "bg-destructive/15 text-destructive" };
+  }
+  if (!printer.deviceName)
+    return { label: "erro", className: "bg-destructive/15 text-destructive" };
+  const detected = detectedPrinters.some((item) => item.name === printer.deviceName);
+  return detected
+    ? { label: "pronta", className: "bg-emerald-500/15 text-emerald-300" }
+    : { label: "não encontrada", className: "bg-amber-500/15 text-amber-200" };
+}
+
 function normalizeWhatsappSettings(
   settings: WhatsappMessageSettings | undefined,
 ): WhatsappMessageSettings {
@@ -198,19 +259,50 @@ function normalizeWhatsappSettings(
 }
 
 function ConfiguracoesPage() {
-  const { selectedUnit, updateUnit, resetOperationalData } = useAdmin();
+  const { selectedUnit, units, updateUnit, resetOperationalData } = useAdmin();
   const [draft, setDraft] = useState<AdminUnit | null>(selectedUnit);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "failed">("idle");
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [resetConfirmation, setResetConfirmation] = useState("");
   const [resetting, setResetting] = useState(false);
+  const [detectedPrinters, setDetectedPrinters] = useState<
+    Array<{ name: string; displayName?: string; status?: number; isDefault?: boolean }>
+  >([]);
+  const [localPrintSettings, setLocalPrintSettings] = useState<MaximusPrintSettings>({
+    version: 1,
+    printers: [],
+  });
+  const [nativePrintStatus, setNativePrintStatus] = useState<string>("");
   const selectedUnitRef = useRef(selectedUnit);
   const selectedUnitId = selectedUnit?.id;
+  const isDesktop = typeof window !== "undefined" && Boolean(window.maximusDesktop?.isElectron);
 
   useEffect(() => {
     selectedUnitRef.current = selectedUnit;
   }, [selectedUnit]);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    let cancelled = false;
+    async function loadDesktopPrinting() {
+      try {
+        const [printersResult, settings] = await Promise.all([
+          window.maximusDesktop!.listPrinters(),
+          window.maximusDesktop!.getPrintSettings(),
+        ]);
+        if (cancelled) return;
+        setDetectedPrinters(printersResult.printers ?? []);
+        setLocalPrintSettings(normalizePrintSettings(settings));
+      } catch (error) {
+        console.error("[Maximus][print-config] Falha ao carregar impressoras", error);
+        setNativePrintStatus("Falha ao carregar impressoras locais.");
+      }
+    }
+    loadDesktopPrinting();
+    return () => {
+      cancelled = true;
+    };
+  }, [isDesktop]);
 
   useEffect(() => {
     const unit = selectedUnitRef.current;
@@ -220,7 +312,6 @@ function ConfiguracoesPage() {
     });
     setDraft(unit ?? null);
     setSaveStatus("idle");
-    setTestStatus("idle");
   }, [selectedUnitId]);
 
   const whatsappSettings = normalizeWhatsappSettings(draft?.whatsappSettings);
@@ -309,17 +400,102 @@ function ConfiguracoesPage() {
     ...draft.kitchenPrintSettings,
   };
 
-  function updateKitchenPrintSettings(patch: Partial<KitchenPrintSettings>) {
-    if (!draft) return;
-    setDraft({
-      ...draft,
-      kitchenPrintSettings: {
-        ...kitchenPrintSettings,
-        ...patch,
-      },
+  async function refreshNativePrinters() {
+    if (!window.maximusDesktop) return;
+    setNativePrintStatus("Atualizando impressoras...");
+    const result = await window.maximusDesktop.listPrinters();
+    setDetectedPrinters(result.printers ?? []);
+    setNativePrintStatus(
+      result.ok ? "Impressoras atualizadas." : (result.error ?? "Falha ao listar impressoras."),
+    );
+  }
+
+  async function saveNativePrintSettings(next: MaximusPrintSettings) {
+    const normalized = normalizePrintSettings(next);
+    setLocalPrintSettings(normalized);
+    if (!window.maximusDesktop) return;
+    try {
+      const saved = await window.maximusDesktop.savePrintSettings(normalized);
+      setLocalPrintSettings(normalizePrintSettings(saved));
+      setNativePrintStatus("Configuração local salva.");
+    } catch (error) {
+      console.error("[Maximus][print-config] Falha ao salvar configuração local", error);
+      setNativePrintStatus("Falha ao salvar configuração local.");
+    }
+  }
+
+  function updateNativePrinter(id: string, patch: Partial<MaximusPrinterConfig>) {
+    const next = {
+      ...localPrintSettings,
+      printers: localPrintSettings.printers.map((printer) =>
+        printer.id === id ? { ...printer, ...patch } : printer,
+      ),
+    };
+    void saveNativePrintSettings(next);
+  }
+
+  function addNativePrinter() {
+    const firstPrinter = detectedPrinters[0];
+    const nextPrinter: MaximusPrinterConfig = {
+      id: `printer-${Date.now()}`,
+      name: firstPrinter?.displayName || firstPrinter?.name || "Impressora",
+      deviceName: firstPrinter?.name ?? "",
+      unitId: selectedUnit?.id ?? units[0]?.id ?? "",
+      destination: "kitchen",
+      connectionMode: "system",
+      networkHost: kitchenPrintSettings.printerIp,
+      networkPort: kitchenPrintSettings.printerPort,
+      networkProtocol: "raw",
+      enabled: true,
+      autoPrint: true,
+      paperWidth: 80,
+      copies: 1,
+      margin: 0,
+      simulate: false,
+    };
+    void saveNativePrintSettings({
+      ...localPrintSettings,
+      printers: [...localPrintSettings.printers, nextPrinter],
     });
-    markDirty();
-    setTestStatus("idle");
+  }
+
+  function removeNativePrinter(id: string) {
+    void saveNativePrintSettings({
+      ...localPrintSettings,
+      printers: localPrintSettings.printers.filter((printer) => printer.id !== id),
+    });
+  }
+
+  async function testNativePrinter(printer: MaximusPrinterConfig) {
+    if (!window.maximusDesktop) return;
+    setNativePrintStatus("Enviando teste...");
+    const result = printer.simulate
+      ? await window.maximusDesktop.printToPdf({
+          deviceName: printer.deviceName,
+          copies: printer.copies,
+          paperWidth: printer.paperWidth,
+          margin: printer.margin,
+          destination: printer.destination,
+          unitId: printer.unitId,
+          html: TEST_PRINT_HTML,
+        })
+      : (printer.connectionMode ?? "system") === "network"
+        ? {
+            ok: false,
+            error:
+              "Impressão de rede direta ainda não está disponível neste aplicativo. Use uma impressora instalada no sistema.",
+          }
+        : await window.maximusDesktop.printTest({
+            ...printer,
+            html: TEST_PRINT_HTML,
+          });
+    setNativePrintStatus(
+      result.ok
+        ? result.file
+          ? `PDF gerado: ${result.file}`
+          : "Teste enviado."
+        : (result.error ?? "Falha no teste."),
+    );
   }
 
   function updateWhatsappSettings(patch: Partial<WhatsappMessageSettings>) {
@@ -599,131 +775,316 @@ function ConfiguracoesPage() {
           </div>
         </section>
 
-        <section className="order-6 rounded-xl border border-violet-500/35 bg-violet-500/10 p-5">
-          <h2 className="text-lg font-semibold text-violet-200">Impressão automática</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Preparado para print-agent local. O teste valida a configuração salva.
-          </p>
-          <div className="mt-4 space-y-4">
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-violet-500/25 bg-violet-500/10 p-3">
-              <span>
-                <span className="block text-sm font-bold">Ativar impressão automática</span>
-                <span className="text-xs text-muted-foreground">
-                  Dispara ao mover pedido para Em produção.
-                </span>
-              </span>
-              <input
-                type="checkbox"
-                checked={kitchenPrintSettings.autoPrintEnabled}
-                onChange={(event) =>
-                  updateKitchenPrintSettings({ autoPrintEnabled: event.target.checked })
-                }
-                className="h-5 w-5 accent-primary"
-              />
-            </label>
-
+        <section className="order-6 rounded-xl border border-cyan-500/35 bg-cyan-500/10 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-extrabold">Impressora da cozinha</h3>
+              <h2 className="text-lg font-semibold text-cyan-200">Impressão</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Selecione as impressoras instaladas neste computador por unidade e setor.
+              </p>
             </div>
-            <div>
-              <label className="mb-1 block text-sm text-muted-foreground">Nome</label>
-              <input
-                value={kitchenPrintSettings.printerName}
-                onChange={(event) =>
-                  updateKitchenPrintSettings({ printerName: event.target.value })
-                }
-                placeholder="Ex.: Cozinha"
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
-              <div>
-                <label className="mb-1 block text-sm text-muted-foreground">IP</label>
-                <input
-                  value={kitchenPrintSettings.printerIp}
-                  onChange={(event) =>
-                    updateKitchenPrintSettings({ printerIp: event.target.value })
-                  }
-                  placeholder="Ex.: 192.168.0.50"
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm text-muted-foreground">Porta</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={kitchenPrintSettings.printerPort}
-                  onChange={(event) =>
-                    updateKitchenPrintSettings({
-                      printerPort: Math.max(1, Number(event.target.value)),
-                    })
-                  }
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-[1fr_130px]">
-              <div>
-                <label className="mb-1 block text-sm text-muted-foreground">
-                  Tipo da impressora
-                </label>
-                <select
-                  value={kitchenPrintSettings.printerType}
-                  onChange={(event) =>
-                    updateKitchenPrintSettings({
-                      printerType: event.target.value as KitchenPrinterType,
-                    })
-                  }
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
+            {isDesktop && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={refreshNativePrinters}
+                  className="inline-flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs font-bold disabled:opacity-50"
                 >
-                  {Object.entries(PRINTER_TYPE_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
+                  <RefreshCw className="h-4 w-4" />
+                  Atualizar lista de impressoras
+                </button>
+                <button
+                  type="button"
+                  onClick={addNativePrinter}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground disabled:opacity-50"
+                >
+                  <Plus className="h-4 w-4" />
+                  Adicionar impressora
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.maximusDesktop?.openPrintLogsFolder()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs font-bold disabled:opacity-50"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  Logs
+                </button>
               </div>
-              <div>
-                <label className="mb-1 block text-sm text-muted-foreground">Número de vias</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={kitchenPrintSettings.copies}
-                  onChange={(event) =>
-                    updateKitchenPrintSettings({ copies: Math.max(1, Number(event.target.value)) })
-                  }
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                onClick={async () => {
-                  setTestStatus("testing");
-                  try {
-                    await printKitchenTest(kitchenPrintSettings);
-                    setTestStatus("success");
-                  } catch {
-                    setTestStatus("failed");
-                  }
-                }}
-                className="inline-flex items-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm font-bold hover:bg-accent"
-              >
-                <Printer className="h-4 w-4" />
-                {testStatus === "testing" ? "Testando..." : "Testar impressão"}
-              </button>
-              {testStatus === "success" && (
-                <span className="text-sm font-bold text-emerald-500">Teste local enviado</span>
-              )}
-              {testStatus === "failed" && (
-                <span className="text-sm font-bold text-destructive">Falha no teste local</span>
-              )}
-            </div>
+            )}
           </div>
+
+          {!isDesktop && (
+            <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm font-semibold text-amber-200">
+              A seleção de impressoras instaladas está disponível apenas no aplicativo desktop. No
+              navegador, use a impressão manual do próprio sistema como fallback.
+            </p>
+          )}
+
+          {isDesktop && (
+            <div className="mt-4 space-y-3">
+              {localPrintSettings.printers.map((printer) => {
+                const printerStatus = getPrinterStatus(printer, detectedPrinters);
+                const connectionMode = printer.connectionMode ?? "system";
+                return (
+                  <div
+                    key={printer.id}
+                    className="rounded-lg border border-cyan-500/25 bg-background/70 p-3"
+                  >
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-extrabold">{printer.name || "Impressora"}</span>
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-extrabold ${printerStatus.className}`}
+                      >
+                        {printerStatus.label}
+                      </span>
+                    </div>
+
+                    <div className="grid gap-3 lg:grid-cols-[1fr_1fr_150px_120px_auto]">
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-muted-foreground">
+                          Nome interno
+                        </label>
+                        <input
+                          value={printer.name}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, { name: event.target.value })
+                          }
+                          className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-muted-foreground">
+                          Impressora instalada
+                        </label>
+                        <select
+                          value={printer.deviceName}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, { deviceName: event.target.value })
+                          }
+                          disabled={connectionMode === "network"}
+                          className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm"
+                        >
+                          <option value="">Selecione</option>
+                          {detectedPrinters.map((item) => (
+                            <option key={item.name} value={item.name}>
+                              {item.displayName || item.name}
+                              {item.isDefault ? " (padrão)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-muted-foreground">
+                          Unidade
+                        </label>
+                        <select
+                          value={printer.unitId}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, { unitId: event.target.value })
+                          }
+                          className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm"
+                        >
+                          {units.map((unit) => (
+                            <option key={unit.id} value={unit.id}>
+                              {unit.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-muted-foreground">
+                          Setor
+                        </label>
+                        <select
+                          value={printer.destination}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, {
+                              destination: event.target
+                                .value as MaximusPrinterConfig["destination"],
+                            })
+                          }
+                          className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm"
+                        >
+                          <option value="kitchen">Cozinha</option>
+                          <option value="cashier">Caixa</option>
+                          <option value="bar">Bar</option>
+                          <option value="custom">Personalizado</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeNativePrinter(printer.id)}
+                        className="self-end rounded-lg bg-secondary px-3 py-2 text-xs font-bold"
+                        aria-label="Remover impressora"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                      <div>
+                        <label className="mb-1 block text-xs font-bold text-muted-foreground">
+                          Modo de conexão
+                        </label>
+                        <select
+                          value={connectionMode}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, {
+                              connectionMode: event.target
+                                .value as MaximusPrinterConfig["connectionMode"],
+                            })
+                          }
+                          className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm"
+                        >
+                          {Object.entries(CONNECTION_MODE_LABELS).map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {connectionMode === "network" && (
+                        <div className="grid gap-3 sm:grid-cols-[1fr_110px_140px]">
+                          <div>
+                            <label className="mb-1 block text-xs font-bold text-muted-foreground">
+                              IP
+                            </label>
+                            <input
+                              value={printer.networkHost ?? ""}
+                              onChange={(event) =>
+                                updateNativePrinter(printer.id, { networkHost: event.target.value })
+                              }
+                              placeholder="Ex.: 192.168.0.50"
+                              className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-bold text-muted-foreground">
+                              Porta
+                            </label>
+                            <input
+                              type="number"
+                              min="1"
+                              value={printer.networkPort ?? 9100}
+                              onChange={(event) =>
+                                updateNativePrinter(printer.id, {
+                                  networkPort: Math.max(1, Number(event.target.value)),
+                                })
+                              }
+                              className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-bold text-muted-foreground">
+                              Protocolo
+                            </label>
+                            <select
+                              value={printer.networkProtocol ?? "raw"}
+                              onChange={(event) =>
+                                updateNativePrinter(printer.id, {
+                                  networkProtocol: event.target
+                                    .value as MaximusPrinterConfig["networkProtocol"],
+                                })
+                              }
+                              className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm"
+                            >
+                              {Object.entries(NETWORK_PROTOCOL_LABELS).map(([value, label]) => (
+                                <option key={value} value={value}>
+                                  {label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                      <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-bold">
+                        Ligada
+                        <input
+                          type="checkbox"
+                          checked={printer.enabled}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, { enabled: event.target.checked })
+                          }
+                          className="accent-primary"
+                        />
+                      </label>
+                      <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-bold">
+                        Impressão automática
+                        <input
+                          type="checkbox"
+                          checked={printer.autoPrint}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, { autoPrint: event.target.checked })
+                          }
+                          className="accent-primary"
+                        />
+                      </label>
+                      <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-bold">
+                        Modo simulação
+                        <input
+                          type="checkbox"
+                          checked={printer.simulate}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, { simulate: event.target.checked })
+                          }
+                          className="accent-primary"
+                        />
+                      </label>
+                      <label className="text-xs font-bold text-muted-foreground">
+                        Largura do papel
+                        <select
+                          value={printer.paperWidth}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, {
+                              paperWidth: Number(event.target.value) as 58 | 80,
+                            })
+                          }
+                          className="mt-1 w-full rounded-lg border border-input bg-card px-3 py-2 text-xs font-bold"
+                        >
+                          <option value={58}>58 mm</option>
+                          <option value={80}>80 mm</option>
+                        </select>
+                      </label>
+                      <label className="text-xs font-bold text-muted-foreground">
+                        Número de cópias
+                        <input
+                          type="number"
+                          min="1"
+                          value={printer.copies}
+                          onChange={(event) =>
+                            updateNativePrinter(printer.id, {
+                              copies: Math.max(1, Number(event.target.value)),
+                            })
+                          }
+                          className="mt-1 w-full rounded-lg border border-input bg-card px-3 py-2 text-xs font-bold"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={!isDesktop}
+                        onClick={() => testNativePrinter(printer)}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs font-bold disabled:opacity-50"
+                      >
+                        <Printer className="h-4 w-4" />
+                        Imprimir teste
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {localPrintSettings.printers.length === 0 && (
+                <p className="rounded-lg border border-dashed border-cyan-500/30 p-3 text-sm font-semibold text-muted-foreground">
+                  Nenhuma impressora local configurada.
+                </p>
+              )}
+              {nativePrintStatus && (
+                <p className="text-xs font-semibold text-muted-foreground">{nativePrintStatus}</p>
+              )}
+            </div>
+          )}
         </section>
 
         <section className="order-4 rounded-xl border border-lime-500/35 bg-lime-500/10 p-5">

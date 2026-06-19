@@ -12,6 +12,9 @@ import type {
   OrderType,
   PaymentMethod,
   PaymentStatus,
+  PrintDestination,
+  PrintJobDestination,
+  PrintJobStatus,
   Product,
   ProductDraft,
   RestaurantTable,
@@ -43,6 +46,7 @@ type CategoryRow = {
   name: string;
   sort_order: number;
   availability_scope: NonNullable<Category["availabilityScope"]>;
+  print_destination?: PrintDestination | null;
   active: boolean;
 };
 
@@ -213,6 +217,7 @@ type CustomerAddressRow = {
 type OrderItemRow = {
   id: string;
   order_id: string;
+  product_id: string | null;
   product_name: string;
   quantity: number;
   unit_price: number;
@@ -228,6 +233,21 @@ export type SupabaseAdminData = {
   tables: RestaurantTable[];
   couriers: Courier[];
   deliveryRules: DeliveryRule[];
+};
+
+export type PrintJob = {
+  id: string;
+  unitId: UnitId;
+  orderId: string;
+  printType: string;
+  destination: PrintJobDestination;
+  status: PrintJobStatus;
+  attempts: number;
+  payload: unknown;
+  errorMessage?: string;
+  createdAt: string;
+  claimedAt?: string;
+  printedAt?: string;
 };
 
 const DB_TYPE_BY_APP: Record<OrderType, OrderRow["order_type"]> = {
@@ -512,6 +532,7 @@ function mapCategory(row: CategoryRow, unitSlugs: UnitId[]): Category {
     order: row.sort_order,
     activeByUnit: Object.fromEntries(unitSlugs.map((slug) => [slug, row.active])),
     availabilityScope: row.availability_scope,
+    printDestination: row.print_destination ?? "kitchen",
   };
 }
 
@@ -640,17 +661,22 @@ function mapOrder(
   slugById: Map<string, UnitId>,
   tableNumberById: Map<string, number>,
   addressById: Map<string, CustomerAddressRow>,
+  printDestinationByProductId: Map<string, PrintDestination>,
 ): Order | null {
   const unitId = slugById.get(row.unit_id);
   if (!unitId) return null;
 
   const mappedItems: OrderItem[] = items.map((item) => ({
     id: item.id,
+    productId: item.product_id ?? undefined,
     name: item.product_name,
     quantity: item.quantity,
     unitPrice: Number(item.unit_price),
     customizations: Array.isArray(item.customizations) ? item.customizations : [],
     notes: item.notes ?? undefined,
+    printDestination: item.product_id
+      ? (printDestinationByProductId.get(item.product_id) ?? "kitchen")
+      : "kitchen",
   }));
 
   const paymentStatus: PaymentStatus =
@@ -758,7 +784,7 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
     selectOrThrow(
       supabase
         .from("categories")
-        .select("id, name, sort_order, availability_scope, active")
+        .select("id, name, sort_order, availability_scope, print_destination, active")
         .eq("active", true)
         .is("deleted_at", null)
         .order("sort_order", { ascending: true }),
@@ -829,7 +855,7 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
     ? ((await selectOrThrow(
         supabase
           .from("order_items")
-          .select("id, order_id, product_name, quantity, unit_price, customizations, notes")
+          .select("id, order_id, product_id, product_name, quantity, unit_price, customizations, notes")
           .in(
             "order_id",
             orderRows.map((order) => order.id),
@@ -858,6 +884,18 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
   for (const table of tables ?? []) {
     tableNumberById.set(table.id, table.table_number);
   }
+  const categoryDestinationById = new Map(
+    (categories ?? []).map((category) => [
+      category.id,
+      (category.print_destination ?? "kitchen") as PrintDestination,
+    ]),
+  );
+  const printDestinationByProductId = new Map(
+    (products ?? []).map((product) => [
+      product.id,
+      categoryDestinationById.get(product.category_id) ?? "kitchen",
+    ]),
+  );
 
   if (!idBySlug.size) {
     throw new Error("Nenhuma unidade encontrada no Supabase.");
@@ -873,6 +911,7 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
           slugById,
           tableNumberById,
           addressById,
+          printDestinationByProductId,
         ),
       )
       .filter((order): order is Order => Boolean(order)),
@@ -939,23 +978,18 @@ export async function assignSupabaseDeliveryDriver(
   orderId: string,
   courier: Courier,
   payoutAmount: number,
-  outForDeliveryAt: string,
 ) {
   assertConfigured();
   const { error } = await getSupabaseClient()
     .from("orders")
     .update({
-      status: "out_for_delivery",
       delivery_driver_id: courier.id,
       delivery_driver_name: courier.name,
       delivery_payout_amount: payoutAmount,
       driver_earned_value: payoutAmount,
-      out_for_delivery_at: outForDeliveryAt,
     })
     .eq("id", orderId);
   if (error) throw new Error(error.message);
-
-  await updateSupabaseCourier(courier.id, { status: "em_entrega", active: true });
 }
 
 export async function updateSupabaseOrderPayment(
@@ -1020,18 +1054,21 @@ export async function markSupabaseDeliveryArrived(order: Order) {
   if (error) throw new Error(error.message);
 }
 
-export async function startSupabaseDeliveryNavigation(order: Order, startedAt: string) {
+export async function startSupabaseDeliveryNavigation(
+  order: Order,
+  startedAt: string,
+  driverLocation?: { latitude: number; longitude: number },
+) {
   assertConfigured();
-  const shouldMoveOut = order.status === "ready" || order.status === "ready_for_pickup";
   const { error } = await getSupabaseClient()
     .from("orders")
     .update({
       navigation_started_at: startedAt,
-      status: shouldMoveOut ? "out_for_delivery" : order.status,
-      delivery_status: shouldMoveOut ? "out_for_delivery" : order.deliveryStatus,
-      out_for_delivery_at: shouldMoveOut
-        ? (order.outForDeliveryAt ?? startedAt)
-        : order.outForDeliveryAt,
+      status: "driver_on_way",
+      delivery_status: "driver_on_way",
+      out_for_delivery_at: order.outForDeliveryAt ?? startedAt,
+      driver_lat: driverLocation?.latitude ?? order.driverLat ?? order.driver_lat ?? null,
+      driver_lng: driverLocation?.longitude ?? order.driverLng ?? order.driver_lng ?? null,
     })
     .eq("id", order.id);
   if (error) throw new Error(error.message);
@@ -1075,9 +1112,6 @@ export async function completeSupabaseDeliveryByDriver(
     if (paymentError) throw new Error(paymentError.message);
   }
 
-  if (driverId) {
-    await updateSupabaseCourier(driverId, { status: "disponivel", active: true });
-  }
 }
 
 export async function updateSupabaseUnit(unitId: UnitId, patch: Partial<AdminUnit>) {
@@ -1170,8 +1204,9 @@ export async function insertSupabaseCategory(name: string, order: number): Promi
       name: cleanName,
       slug: `${slugify(cleanName)}-${Date.now().toString(36)}`,
       sort_order: order,
+      print_destination: "kitchen",
     })
-    .select("id, name, sort_order, availability_scope, active")
+    .select("id, name, sort_order, availability_scope, print_destination, active")
     .single();
   if (error) throw new Error(error.message);
   return mapCategory(data as CategoryRow);
@@ -1179,12 +1214,16 @@ export async function insertSupabaseCategory(name: string, order: number): Promi
 
 export async function updateSupabaseCategory(
   categoryId: string,
-  patch: Partial<Pick<Category, "name" | "order">>,
+  patch: Partial<Pick<Category, "name" | "order" | "printDestination">>,
 ) {
   assertConfigured();
   const { error } = await getSupabaseClient()
     .from("categories")
-    .update({ name: patch.name, sort_order: patch.order })
+    .update({
+      name: patch.name,
+      sort_order: patch.order,
+      print_destination: patch.printDestination,
+    })
     .eq("id", categoryId);
   if (error) throw new Error(error.message);
 }
@@ -1573,6 +1612,92 @@ export async function validateSupabaseAdminPin(unitId: UnitId, pin: string) {
   const settings = rows[0];
   const expected = settings?.admin_pin ?? "";
   return Boolean(expected) && expected === pin;
+}
+
+function mapPrintJob(row: {
+  id: string;
+  unit_id: string;
+  order_id: string;
+  print_type: string;
+  destination: PrintJobDestination;
+  status: PrintJobStatus;
+  attempts: number;
+  payload: unknown;
+  error_message: string | null;
+  created_at: string;
+  claimed_at: string | null;
+  printed_at: string | null;
+}): PrintJob {
+  return {
+    id: row.id,
+    unitId: row.unit_id,
+    orderId: row.order_id,
+    printType: row.print_type,
+    destination: row.destination,
+    status: row.status,
+    attempts: row.attempts,
+    payload: row.payload,
+    errorMessage: row.error_message ?? undefined,
+    createdAt: row.created_at,
+    claimedAt: row.claimed_at ?? undefined,
+    printedAt: row.printed_at ?? undefined,
+  };
+}
+
+export async function createSupabasePrintJobs(
+  order: Order,
+  jobs: Array<{ destination: PrintJobDestination; payload: unknown }>,
+) {
+  assertConfigured();
+  if (!jobs.length) return [];
+  const unit = (await selectOrThrow(
+    getSupabaseClient().from("units").select("id").eq("slug", order.unitId).single(),
+  )) as Pick<UnitRow, "id">;
+  const rows = jobs.map((job) => ({
+    unit_id: unit.id,
+    order_id: order.id,
+    print_type: "auto",
+    destination: job.destination,
+    status: "pending",
+    payload: job.payload,
+  }));
+  const { data, error } = await getSupabaseClient()
+    .from("print_jobs")
+    .upsert(rows, { onConflict: "order_id,print_type,destination", ignoreDuplicates: true })
+    .select(
+      "id, unit_id, order_id, print_type, destination, status, attempts, payload, error_message, created_at, claimed_at, printed_at",
+    );
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => mapPrintJob(row as Parameters<typeof mapPrintJob>[0]));
+}
+
+export async function claimNextSupabasePrintJob(unitId: UnitId) {
+  assertConfigured();
+  const unit = (await selectOrThrow(
+    getSupabaseClient().from("units").select("id").eq("slug", unitId).single(),
+  )) as Pick<UnitRow, "id">;
+  const { data, error } = await getSupabaseClient().rpc("claim_next_print_job", {
+    p_unit_id: unit.id,
+  });
+  if (error) throw new Error(error.message);
+  return data ? mapPrintJob(data as Parameters<typeof mapPrintJob>[0]) : null;
+}
+
+export async function finishSupabasePrintJob(
+  jobId: string,
+  status: Extract<PrintJobStatus, "printed" | "simulated" | "failed">,
+  errorMessage?: string,
+) {
+  assertConfigured();
+  const { error } = await getSupabaseClient()
+    .from("print_jobs")
+    .update({
+      status,
+      error_message: errorMessage ?? null,
+      printed_at: status === "printed" || status === "simulated" ? new Date().toISOString() : null,
+    })
+    .eq("id", jobId);
+  if (error) throw new Error(error.message);
 }
 
 export async function loginSupabaseDriver(username: string, pin: string) {

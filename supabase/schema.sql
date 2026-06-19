@@ -68,13 +68,15 @@ create table public.categories (
   slug text not null unique,
   sort_order integer not null default 0,
   availability_scope text not null default 'all',
+  print_destination text not null default 'kitchen',
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint categories_slug_format check (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
   constraint categories_availability_scope_check check (
     availability_scope in ('all', 'dine_in_only', 'delivery_only', 'takeaway_only')
-  )
+  ),
+  constraint categories_print_destination_check check (print_destination in ('kitchen', 'cashier', 'bar', 'none'))
 );
 
 create table public.products (
@@ -272,6 +274,27 @@ create table public.payments (
   constraint payments_amount_non_negative check (amount >= 0)
 );
 
+create table public.print_jobs (
+  id uuid primary key default gen_random_uuid(),
+  unit_id uuid not null references public.units(id) on delete cascade,
+  order_id uuid not null references public.orders(id) on delete cascade,
+  print_type text not null,
+  destination text not null,
+  status text not null default 'pending',
+  attempts integer not null default 0,
+  payload jsonb not null default '{}'::jsonb,
+  error_message text,
+  created_at timestamptz not null default now(),
+  claimed_at timestamptz,
+  printed_at timestamptz,
+  updated_at timestamptz not null default now(),
+  constraint print_jobs_destination_check check (destination in ('kitchen', 'cashier', 'bar', 'custom')),
+  constraint print_jobs_status_check check (
+    status in ('pending', 'processing', 'printed', 'failed', 'simulated', 'cancelled')
+  ),
+  constraint print_jobs_attempts_non_negative check (attempts >= 0)
+);
+
 create table public.delivery_fee_rules (
   id uuid primary key default gen_random_uuid(),
   unit_id uuid not null references public.units(id) on delete cascade,
@@ -370,6 +393,8 @@ create trigger set_order_items_updated_at before update on public.order_items
 for each row execute function public.set_updated_at();
 create trigger set_payments_updated_at before update on public.payments
 for each row execute function public.set_updated_at();
+create trigger set_print_jobs_updated_at before update on public.print_jobs
+for each row execute function public.set_updated_at();
 create trigger set_delivery_fee_rules_updated_at before update on public.delivery_fee_rules
 for each row execute function public.set_updated_at();
 create trigger set_admin_settings_updated_at before update on public.admin_settings
@@ -394,6 +419,9 @@ create index idx_orders_delivery_driver_id on public.orders(delivery_driver_id);
 create index idx_order_items_order_id on public.order_items(order_id);
 create index idx_payments_order_id on public.payments(order_id);
 create index idx_payments_status on public.payments(status);
+create unique index print_jobs_order_type_destination_unique on public.print_jobs(order_id, print_type, destination);
+create index idx_print_jobs_unit_status_created on public.print_jobs(unit_id, status, created_at);
+create index idx_print_jobs_order_id on public.print_jobs(order_id);
 create index idx_admin_settings_unit_id on public.admin_settings(unit_id);
 
 alter table public.units enable row level security;
@@ -407,6 +435,7 @@ alter table public.delivery_drivers enable row level security;
 alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
 alter table public.payments enable row level security;
+alter table public.print_jobs enable row level security;
 alter table public.delivery_fee_rules enable row level security;
 alter table public.admin_settings enable row level security;
 
@@ -423,8 +452,39 @@ create policy "initial_public_access_delivery_drivers" on public.delivery_driver
 create policy "initial_public_access_orders" on public.orders for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_order_items" on public.order_items for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_payments" on public.payments for all to anon, authenticated using (true) with check (true);
+create policy "initial_public_access_print_jobs" on public.print_jobs for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_delivery_fee_rules" on public.delivery_fee_rules for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_admin_settings" on public.admin_settings for all to anon, authenticated using (true) with check (true);
+
+create or replace function public.claim_next_print_job(p_unit_id uuid)
+returns public.print_jobs
+language plpgsql
+as $$
+declare
+  v_job public.print_jobs;
+begin
+  update public.print_jobs
+  set
+    status = 'processing',
+    attempts = attempts + 1,
+    claimed_at = now(),
+    error_message = null
+  where id = (
+    select id
+    from public.print_jobs
+    where unit_id = p_unit_id
+      and status = 'pending'
+    order by created_at asc
+    for update skip locked
+    limit 1
+  )
+  returning * into v_job;
+
+  return v_job;
+end;
+$$;
+
+grant execute on function public.claim_next_print_job(uuid) to anon, authenticated;
 
 -- Data API grants for projects where new tables are not exposed automatically.
 grant usage on schema public to anon, authenticated;
@@ -440,6 +500,7 @@ grant select, insert, update, delete on
   public.orders,
   public.order_items,
   public.payments,
+  public.print_jobs,
   public.delivery_fee_rules,
   public.admin_settings
 to anon, authenticated;

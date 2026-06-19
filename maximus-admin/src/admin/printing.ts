@@ -3,8 +3,10 @@ import type {
   AdminUnit,
   KitchenPrintSettings,
   Order,
+  OrderItem,
   PaymentMethod,
   PaymentStatus,
+  PrintJobDestination,
 } from "./data/types";
 
 const logoUrl = "/branding/maximus-logo.png";
@@ -12,6 +14,7 @@ const logoUrl = "/branding/maximus-logo.png";
 const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   pix_app: "Pix pelo app",
   pix_balcao: "Pix no balcão",
+  local: "Pagamento no local",
   cartao: "Cartão",
   dinheiro: "Dinheiro",
 };
@@ -41,6 +44,204 @@ export interface KitchenTicketPayload {
   payment: string;
   paymentStatus: string;
   total: number;
+}
+
+export type NativePrintDestination = PrintJobDestination;
+export type NativePrintRoute = "kitchen" | "cashier" | "bar" | "custom";
+
+export function isElectronDesktop() {
+  return typeof window !== "undefined" && Boolean(window.maximusDesktop?.isElectron);
+}
+
+export function destinationLabel(destination: string) {
+  if (destination === "kitchen") return "Cozinha";
+  if (destination === "cashier") return "Caixa";
+  if (destination === "bar") return "Bar";
+  return "Setor";
+}
+
+function thermalCss(width: 58 | 80 = 80) {
+  return `
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+    body { font-family: Arial, sans-serif; font-size: ${width === 58 ? 11 : 13}px; }
+    main { width: ${width}mm; padding: 2mm; }
+    h1 { margin: 0 0 3mm; text-align: center; font-size: ${width === 58 ? 18 : 24}px; }
+    h2 { margin: 3mm 0 1.5mm; border-top: 1px solid #000; padding-top: 2mm; font-size: ${width === 58 ? 12 : 14}px; text-transform: uppercase; }
+    p { margin: 1mm 0; }
+    .center { text-align: center; }
+    .row { display: flex; justify-content: space-between; gap: 2mm; border-bottom: 1px dashed #999; padding: 1.2mm 0; }
+    .item { border-bottom: 1px dashed #999; padding: 2mm 0; break-inside: avoid; }
+    .qty { font-size: ${width === 58 ? 14 : 17}px; font-weight: 800; }
+    .muted { color: #333; }
+    .note { border: 1px solid #000; padding: 1.5mm; margin-top: 1.5mm; font-weight: 800; }
+    .total { font-size: ${width === 58 ? 14 : 18}px; font-weight: 900; border-bottom: 2px solid #000; }
+    ul { margin: 1mm 0 0; padding-left: 5mm; }
+    @page { size: ${width}mm auto; margin: 0; }
+    @media print { body, main { width: ${width}mm; } }
+  `;
+}
+
+function renderThermalItems(items: OrderItem[], withPrices: boolean) {
+  return items
+    .map((item) => {
+      const customizations = item.customizations.length
+        ? `<ul>${item.customizations.map((customization) => `<li>${escapeHtml(customization)}</li>`).join("")}</ul>`
+        : "";
+      return `<section class="item">
+        <p><span class="qty">${item.quantity}x</span> <strong>${escapeHtml(item.name)}</strong>${
+          withPrices ? ` <span>${formatBRL(item.unitPrice * item.quantity)}</span>` : ""
+        }</p>
+        ${customizations}
+        ${item.notes ? `<p class="note">OBS: ${escapeHtml(item.notes)}</p>` : ""}
+      </section>`;
+    })
+    .join("");
+}
+
+export function buildKitchenTicketForItems(
+  order: Order,
+  unit?: AdminUnit | null,
+  items: OrderItem[] = order.items,
+  destination = "kitchen",
+  paperWidth: 58 | 80 = 80,
+) {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
+    <title>${destinationLabel(destination)} #${order.number}</title>
+    <style>${thermalCss(paperWidth)}</style></head><body><main>
+    <h1>#${order.number}</h1>
+    <p class="center"><strong>${escapeHtml(unit?.name ?? "Maximus")}</strong></p>
+    <p class="center">${escapeHtml(destinationLabel(destination))}</p>
+    <div class="row"><strong>Hora</strong><span>${escapeHtml(formatDateTime(order.createdAt))}</span></div>
+    <div class="row"><strong>Tipo</strong><span>${escapeHtml(TYPE_LABELS[order.type])}</span></div>
+    <div class="row"><strong>Local</strong><span>${escapeHtml(orderLocation(order))}</span></div>
+    <div class="row"><strong>Cliente</strong><span>${escapeHtml(order.customerName || "Cliente")}</span></div>
+    <h2>Itens</h2>
+    ${renderThermalItems(items, false) || "<p>Sem itens para este setor.</p>"}
+    ${order.notes ? `<h2>Observações</h2><p class="note">${escapeHtml(order.notes)}</p>` : ""}
+    </main></body></html>`;
+}
+
+export function buildCashierReceiptForItems(
+  order: Order,
+  unit?: AdminUnit | null,
+  items: OrderItem[] = order.items,
+  paperWidth: 58 | 80 = 80,
+) {
+  const subtotal = order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+  const deliveryFee =
+    order.deliveryFeeSnapshot ??
+    order.delivery_fee_snapshot ??
+    order.deliveryFee ??
+    order.delivery_fee ??
+    0;
+  const discounts = Math.max(0, subtotal + deliveryFee - order.total);
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
+    <title>Comprovante #${order.number}</title>
+    <style>${thermalCss(paperWidth)}</style></head><body><main>
+    <h1>#${order.number}</h1>
+    <p class="center"><strong>${escapeHtml(unit?.name ?? "Maximus")}</strong></p>
+    ${unit?.address ? `<p class="center muted">${escapeHtml(unit.address)}</p>` : ""}
+    <div class="row"><strong>Hora</strong><span>${escapeHtml(formatDateTime(order.createdAt))}</span></div>
+    <div class="row"><strong>Cliente</strong><span>${escapeHtml(order.customerName || "Cliente")}</span></div>
+    <div class="row"><strong>Tipo</strong><span>${escapeHtml(orderReceiptConsumptionLabel(order))}</span></div>
+    <div class="row"><strong>Destino</strong><span>${escapeHtml(orderLocation(order))}</span></div>
+    <h2>Itens</h2>
+    ${renderThermalItems(items, true) || "<p>Sem itens.</p>"}
+    <h2>Totais</h2>
+    <div class="row"><strong>Subtotal</strong><span>${formatBRL(subtotal)}</span></div>
+    <div class="row"><strong>Taxa</strong><span>${formatBRL(deliveryFee)}</span></div>
+    <div class="row"><strong>Desconto</strong><span>${formatBRL(discounts)}</span></div>
+    <div class="row total"><strong>Total</strong><span>${formatBRL(order.total)}</span></div>
+    <div class="row"><strong>Pagamento</strong><span>${escapeHtml(PAYMENT_METHOD_LABELS[order.paymentMethod] ?? order.paymentMethod)}</span></div>
+    ${order.notes ? `<h2>Observações</h2><p class="note">${escapeHtml(order.notes)}</p>` : ""}
+    </main></body></html>`;
+}
+
+export function buildPrintHtmlForDestination(
+  order: Order,
+  unit: AdminUnit | null | undefined,
+  destination: string,
+  items: OrderItem[],
+  paperWidth: 58 | 80 = 80,
+) {
+  if (destination === "cashier") return buildCashierReceiptForItems(order, unit, items, paperWidth);
+  return buildKitchenTicketForItems(order, unit, items, destination, paperWidth);
+}
+
+export function buildKitchenReceiptHtml(
+  order: Order,
+  unit?: AdminUnit | null,
+  items: OrderItem[] = order.items,
+  destination = "kitchen",
+  paperWidth: 58 | 80 = 80,
+) {
+  return buildKitchenTicketForItems(order, unit, items, destination, paperWidth);
+}
+
+export function buildCashierReceiptHtml(
+  order: Order,
+  unit?: AdminUnit | null,
+  items: OrderItem[] = order.items,
+  paperWidth: 58 | 80 = 80,
+) {
+  return buildCashierReceiptForItems(order, unit, items, paperWidth);
+}
+
+export function webPrintHtml(html: string, width = 520, height = 720) {
+  const printWindow = window.open("", "_blank", `width=${width},height=${height}`);
+  if (!printWindow) throw new Error("Não foi possível abrir a janela de impressão.");
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+  const runPrint = () => {
+    printWindow.focus();
+    printWindow.print();
+  };
+  if (printWindow.document.readyState === "complete") {
+    window.setTimeout(runPrint, 150);
+    return;
+  }
+  printWindow.addEventListener("load", () => window.setTimeout(runPrint, 150), { once: true });
+}
+
+export async function printRenderedHtml(
+  html: string,
+  config?: Partial<MaximusPrinterConfig>,
+  meta: Record<string, unknown> = {},
+) {
+  if (!isElectronDesktop() || !config) {
+    webPrintHtml(html);
+    return { ok: true, mode: "web" };
+  }
+  if ((config.connectionMode ?? "system") !== "system" && !config.simulate) {
+    return {
+      ok: false,
+      error:
+        "Impressão HTML nativa exige uma impressora instalada no sistema. Rede direta não aceita HTML renderizado.",
+    };
+  }
+  const payload = {
+    html,
+    deviceName: config.deviceName,
+    copies: config.copies ?? 1,
+    paperWidth: config.paperWidth ?? 80,
+    margin: config.margin ?? 0,
+    destination: config.destination,
+    unitId: config.unitId,
+    ...meta,
+  };
+  return config.simulate
+    ? window.maximusDesktop!.printToPdf(payload)
+    : window.maximusDesktop!.printHtml(payload);
+}
+
+export async function desktopPrintHtml(
+  html: string,
+  config?: Partial<MaximusPrinterConfig>,
+  meta: Record<string, unknown> = {},
+) {
+  return printRenderedHtml(html, config, meta);
 }
 
 function escapeHtml(value: string) {
