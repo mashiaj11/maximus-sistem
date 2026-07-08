@@ -1,0 +1,113 @@
+name: Build Maximus Admin Windows Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  APP_DIR: maximus-admin
+
+jobs:
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: maximus-admin/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci --legacy-peer-deps
+
+      - name: Build Windows installer
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run electron:dist:win
+
+      - name: Prepare release files
+        shell: pwsh
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $releaseDir = Join-Path (Get-Location) "release"
+          $publishDir = Join-Path $env:GITHUB_WORKSPACE "windows-release"
+
+          New-Item -ItemType Directory -Force -Path $publishDir | Out-Null
+
+          if (-not (Test-Path $releaseDir)) {
+            throw "Pasta de release não encontrada: $releaseDir"
+          }
+
+          Copy-Item -Path (Join-Path $releaseDir "*.exe") -Destination $publishDir -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path (Join-Path $releaseDir "*.yml") -Destination $publishDir -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path (Join-Path $releaseDir "*.blockmap") -Destination $publishDir -Force -ErrorAction SilentlyContinue
+
+          $installer = Get-ChildItem $publishDir -Filter "*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+          if (-not $installer) {
+            throw "Nenhum instalador .exe foi gerado em maximus-admin/release."
+          }
+
+          $pkg = Get-Content "package.json" | ConvertFrom-Json
+
+          $versionJson = [ordered]@{
+            name = "Maximus Admin"
+            version = $pkg.version
+            installer = $installer.Name
+            commit = $env:GITHUB_SHA
+            builtAt = (Get-Date).ToUniversalTime().ToString("o")
+          } | ConvertTo-Json -Depth 5
+
+          Set-Content -Path (Join-Path $publishDir "version.json") -Value $versionJson -Encoding UTF8
+
+          Write-Host "Arquivos preparados:"
+          Get-ChildItem $publishDir | Select-Object Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maximus-admin-windows
+          path: windows-release/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $pkg = Get-Content "${{ env.APP_DIR }}/package.json" | ConvertFrom-Json
+          $version = $pkg.version
+
+          if ($env:GITHUB_REF -like "refs/tags/*") {
+            $tag = $env:GITHUB_REF.Replace("refs/tags/", "")
+          } else {
+            $tag = "v$version"
+          }
+
+          $releaseTitle = "Maximus Admin $tag"
+
+          gh release view $tag 2>$null
+
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag já existe. Enviando arquivos atualizados..."
+            gh release upload $tag windows-release/* --clobber
+          } else {
+            Write-Host "Criando release $tag..."
+            gh release create $tag windows-release/* --title $releaseTitle --notes "Instalador Windows do Maximus Admin."
+          }
