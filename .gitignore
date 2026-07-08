@@ -1,9 +1,0 @@
-node_modules
-dist
-.env
-.env.local
-.DS_Store
-.vite
-supabase/.temp/
-auditoria-*.txt
-*.bak-electron
