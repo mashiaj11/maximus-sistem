@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="title">
+  <title id="title">Ilustração de chopp gelado</title>
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#15100b"/><stop offset="1" stop-color="#070707"/></linearGradient>
+    <linearGradient id="beer" x2="0" y2="1"><stop stop-color="#ffc928"/><stop offset=".55" stop-color="#e58a00"/><stop offset="1" stop-color="#8e4300"/></linearGradient>
+  </defs>
+  <rect width="600" height="600" fill="url(#bg)"/>
+  <ellipse cx="288" cy="516" rx="135" ry="22" fill="#000" opacity=".65"/>
+  <path d="M183 153h213l-24 332c-3 35-29 51-82 51s-80-16-83-51z" fill="#d9eff0" opacity=".22" stroke="#d7f4f2" stroke-width="7"/>
+  <path d="M200 212h179l-21 270c-2 23-23 34-68 34s-67-11-69-34z" fill="url(#beer)"/>
+  <path d="M393 248h53c54 0 82 35 75 96l-5 42c-6 48-37 72-92 72h-46l6-54h38c25 0 37-10 40-31l5-39c3-23-7-34-31-34h-47z" fill="none" stroke="#d7f4f2" stroke-width="16" opacity=".45"/>
+  <path d="M181 174c15-47 58-66 109-50 34-27 88-5 94 38 31 7 38 39 14 62H191c-24-14-30-37-10-50z" fill="#fff4cf" stroke="#ead8a6" stroke-width="5"/>
+  <g fill="#fff3bd" opacity=".65"><circle cx="242" cy="276" r="5"/><circle cx="322" cy="310" r="4"/><circle cx="273" cy="365" r="5"/><circle cx="339" cy="420" r="4"/><circle cx="247" cy="458" r="3"/></g>
+  <path d="M226 236 211 470M268 230l-8 258" stroke="#fff7dc" stroke-width="8" stroke-linecap="round" opacity=".2"/>
+</svg>
