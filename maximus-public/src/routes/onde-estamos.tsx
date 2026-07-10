@@ -183,11 +183,11 @@ function WherePage() {
 }
 
 function mapUrl(unit: WhereUnit) {
-  return `https://www.openstreetmap.org/?mlat=${unit.latitude}&mlon=${unit.longitude}#map=18/${unit.latitude}/${unit.longitude}`;
+  return `https://www.google.com/maps/search/?api=1&query=${unit.latitude},${unit.longitude}`;
 }
 
 function routeUrl(unit: WhereUnit) {
-  return `https://www.openstreetmap.org/directions?to=${unit.latitude},${unit.longitude}`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${unit.latitude},${unit.longitude}&travelmode=driving`;
 }
 
 function whatsappUrl(phone: string) {

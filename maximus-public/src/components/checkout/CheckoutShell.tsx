@@ -32,19 +32,30 @@ export function CheckoutShell({
 export function BigOption({
   label,
   description,
+  icon,
   onClick,
 }: {
   label: string;
   description?: string;
+  icon?: ReactNode;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full flex-col rounded-2xl border border-border bg-card p-5 text-left shadow-card transition-all hover:border-primary hover:-translate-y-0.5"
+      className="flex w-full items-center gap-4 rounded-2xl border border-border bg-card p-5 text-left shadow-card transition-all hover:-translate-y-0.5 hover:border-primary hover:bg-primary/10"
     >
-      <span className="text-lg font-bold">{label}</span>
-      {description && <span className="mt-1 text-sm text-muted-foreground">{description}</span>}
+      {icon && (
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/30 bg-primary/10 text-primary">
+          {icon}
+        </span>
+      )}
+      <span className="min-w-0">
+        <span className="block text-lg font-bold">{label}</span>
+        {description && (
+          <span className="mt-1 block text-sm text-muted-foreground">{description}</span>
+        )}
+      </span>
     </button>
   );
 }

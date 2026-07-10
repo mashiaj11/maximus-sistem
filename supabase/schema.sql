@@ -55,12 +55,43 @@ create table public.customer_addresses (
   reference text,
   latitude numeric(10, 7),
   longitude numeric(10, 7),
+  delivery_zone_id uuid,
+  delivery_zone_name text,
+  delivery_fee_snapshot numeric(10, 2),
   is_primary boolean not null default false,
   is_active boolean not null default true,
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create table public.delivery_zones (
+  id uuid primary key default gen_random_uuid(),
+  unit_id uuid not null references public.units(id) on delete cascade,
+  name text not null,
+  fee numeric(10, 2) not null default 0,
+  estimated_time_min integer,
+  estimated_time_max integer,
+  active boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint delivery_zones_fee_non_negative check (fee >= 0),
+  constraint delivery_zones_time_positive check (
+    (estimated_time_min is null or estimated_time_min > 0)
+    and (estimated_time_max is null or estimated_time_max > 0)
+    and (
+      estimated_time_min is null
+      or estimated_time_max is null
+      or estimated_time_max >= estimated_time_min
+    )
+  ),
+  constraint delivery_zones_unique_name_per_unit unique (unit_id, name)
+);
+
+alter table public.customer_addresses
+  add constraint customer_addresses_delivery_zone_id_fkey
+  foreign key (delivery_zone_id) references public.delivery_zones(id) on delete set null;
 
 create table public.categories (
   id uuid primary key default gen_random_uuid(),
@@ -174,6 +205,8 @@ create table public.orders (
   delivery_fee numeric(10, 2) not null default 0,
   delivery_payout_amount numeric(10, 2) not null default 0,
   delivery_range_id uuid references public.delivery_fee_rules(id) on delete set null,
+  delivery_zone_id uuid references public.delivery_zones(id) on delete set null,
+  delivery_zone_name text,
   customer_lat numeric(10, 7),
   customer_lng numeric(10, 7),
   customer_address_text text,
@@ -182,6 +215,8 @@ create table public.orders (
   delivery_location_source text,
   geocoding_status text,
   delivery_distance_km numeric(8, 2),
+  delivery_estimated_time integer,
+  delivery_calculation_method text,
   address_street text,
   address_number text,
   address_neighborhood text,
@@ -397,6 +432,8 @@ create trigger set_print_jobs_updated_at before update on public.print_jobs
 for each row execute function public.set_updated_at();
 create trigger set_delivery_fee_rules_updated_at before update on public.delivery_fee_rules
 for each row execute function public.set_updated_at();
+create trigger set_delivery_zones_updated_at before update on public.delivery_zones
+for each row execute function public.set_updated_at();
 create trigger set_admin_settings_updated_at before update on public.admin_settings
 for each row execute function public.set_updated_at();
 
@@ -411,6 +448,7 @@ create index idx_product_unit_availability_product on public.product_unit_availa
 create index idx_store_tables_unit_id on public.store_tables(unit_id);
 create index idx_delivery_drivers_unit_status on public.delivery_drivers(unit_id, status);
 create index idx_delivery_fee_rules_unit_distance on public.delivery_fee_rules(unit_id, max_distance_km);
+create index idx_delivery_zones_unit_active_order on public.delivery_zones(unit_id, active, sort_order, name);
 create index idx_orders_unit_status on public.orders(unit_id, status);
 create index idx_orders_unit_created_at on public.orders(unit_id, created_at desc);
 create index idx_orders_customer_id on public.orders(customer_id);
@@ -437,6 +475,7 @@ alter table public.order_items enable row level security;
 alter table public.payments enable row level security;
 alter table public.print_jobs enable row level security;
 alter table public.delivery_fee_rules enable row level security;
+alter table public.delivery_zones enable row level security;
 alter table public.admin_settings enable row level security;
 
 -- Projeto ainda sem Auth/RBAC. Estas policies liberam a fase inicial via anon/authenticated.
@@ -454,6 +493,7 @@ create policy "initial_public_access_order_items" on public.order_items for all 
 create policy "initial_public_access_payments" on public.payments for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_print_jobs" on public.print_jobs for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_delivery_fee_rules" on public.delivery_fee_rules for all to anon, authenticated using (true) with check (true);
+create policy "initial_public_access_delivery_zones" on public.delivery_zones for all to anon, authenticated using (true) with check (true);
 create policy "initial_public_access_admin_settings" on public.admin_settings for all to anon, authenticated using (true) with check (true);
 
 create or replace function public.claim_next_print_job(p_unit_id uuid)

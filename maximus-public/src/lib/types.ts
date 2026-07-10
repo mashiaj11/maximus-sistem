@@ -15,6 +15,8 @@ export interface ProductOption {
   id: string;
   label: string;
   price?: number;
+  isNegativeChoice?: boolean;
+  maxQuantity?: number;
 }
 
 export interface ProductOptionGroup {
@@ -24,6 +26,9 @@ export interface ProductOptionGroup {
   required?: boolean;
   min?: number;
   max?: number;
+  decisionRequired?: boolean;
+  active?: boolean;
+  sortOrder?: number;
   options: ProductOption[];
 }
 
@@ -74,17 +79,34 @@ export interface CartItem {
 
 export interface CustomerAddress {
   id: string;
-  label: "Casa" | "Trabalho" | "Outro";
+  label: "Casa" | "Trabalho" | "Amigos" | "Outro";
   street: string;
   number: string;
   neighborhood: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
   complement?: string;
   reference?: string;
   latitude?: number;
   longitude?: number;
+  deliveryZoneId?: string;
+  deliveryZoneName?: string;
+  deliveryFeeSnapshot?: number;
   isDefault: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface DeliveryZone {
+  id: string;
+  unitId: string;
+  name: string;
+  fee: number;
+  estimatedTimeMin?: number | null;
+  estimatedTimeMax?: number | null;
+  isActive: boolean;
+  sortOrder: number;
 }
 
 export interface CustomerOrderItem {
@@ -153,6 +175,10 @@ export interface OrderInfo {
   deliveryDistanceKm?: number | null;
   deliveryFee?: number;
   deliveryRangeId?: string | null;
+  deliveryZoneId?: string | null;
+  deliveryZoneName?: string | null;
+  deliveryEstimatedTime?: number | null;
+  deliveryCalculationMethod?: string | null;
   minimumOrderValue?: number;
   deliveryLocationSource?:
     | "gps"
@@ -186,8 +212,6 @@ export const STATUS_FLOWS: Record<OrderTrackMode, OrderStatusStep[]> = {
     { key: "in_preparation", label: "Em produção" },
     { key: "ready", label: "Pedido pronto" },
     { key: "out_for_delivery", label: "Saiu para entrega" },
-    { key: "driver_on_way", label: "Entregador a caminho" },
-    { key: "driver_nearby", label: "Entregador a 500 metros" },
     { key: "arrived", label: "Pedido chegou" },
     { key: "delivered", label: "Entregue" },
   ],

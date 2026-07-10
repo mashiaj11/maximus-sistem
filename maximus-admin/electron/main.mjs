@@ -263,6 +263,27 @@ async function printToPdf(payload = {}) {
   return { ok: true, mode: "simulated", file };
 }
 
+function buildPrinterTestHtml(payload = {}) {
+  const sectorName = String(payload.sectorName ?? "Setor");
+  const now = new Date().toLocaleString("pt-BR");
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
+    <style>
+      @page { size: 80mm auto; margin: 0; }
+      html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+      body { font-family: Arial, sans-serif; font-size: 13px; }
+      main { width: 80mm; padding: 3mm; }
+      h1 { margin: 0 0 4mm; text-align: center; font-size: 22px; }
+      p { margin: 1.5mm 0; }
+      .line { margin-top: 4mm; border-top: 1px dashed #000; }
+    </style></head><body><main>
+      <h1>MAXIMUS</h1>
+      <p><strong>Teste de impressão</strong></p>
+      <p>Setor: ${sectorName.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</p>
+      <p>Data/hora: ${now}</p>
+      <p class="line">----------------</p>
+    </main></body></html>`;
+}
+
 async function invokeDesktopPrint(channel, handler, payload) {
   try {
     return await withTimeout(handler(payload), PRINT_TIMEOUT_MS + 5000, channel);
@@ -274,14 +295,16 @@ async function invokeDesktopPrint(channel, handler, payload) {
 }
 
 function registerPrintIpc() {
-  ipcMain.handle("maximus:list-printers", async () => {
+  const listPrinters = async () => {
     try {
       const printers = await mainWindow?.webContents.getPrintersAsync();
       return { ok: true, printers: printers ?? [] };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : "Falha ao listar." };
     }
-  });
+  };
+  ipcMain.handle("maximus:list-printers", listPrinters);
+  ipcMain.handle("maximus:printers:list", listPrinters);
   ipcMain.handle("maximus:get-print-settings", () => readPrintSettings());
   ipcMain.handle("maximus:save-print-settings", (_event, settings) => writePrintSettings(settings));
   ipcMain.handle("maximus:print-html", (_event, payload) =>
@@ -289,6 +312,21 @@ function registerPrintIpc() {
   );
   ipcMain.handle("maximus:print-test", (_event, payload) =>
     invokeDesktopPrint("printTest", (data) => printHtml(data), payload),
+  );
+  ipcMain.handle("maximus:printer:test", (_event, payload = {}) =>
+    invokeDesktopPrint(
+      "printerTest",
+      (data) =>
+        printHtml({
+          html: buildPrinterTestHtml(data),
+          deviceName: data.printerName,
+          paperWidth: 80,
+          copies: 1,
+          margin: 0,
+          destination: data.sectorKey,
+        }),
+      payload,
+    ),
   );
   ipcMain.handle("maximus:print-to-pdf", (_event, payload) =>
     invokeDesktopPrint("printToPdf", printToPdf, payload),

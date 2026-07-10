@@ -27,3 +27,8 @@ contextBridge.exposeInMainWorld("maximusDesktop", {
     },
   },
 });
+
+contextBridge.exposeInMainWorld("maximusPrinter", {
+  listPrinters: () => ipcRenderer.invoke("maximus:printers:list"),
+  testPrinter: (payload) => ipcRenderer.invoke("maximus:printer:test", payload),
+});

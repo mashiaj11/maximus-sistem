@@ -1,11 +1,15 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { ClipboardList, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Button } from "@/components/ui/button";
 import { getCurrentCustomer } from "@/lib/customer";
 import { formatPrice } from "@/lib/format";
-import type { CustomerProfile } from "@/lib/types";
+import { getDefaultSelections } from "@/lib/cart-customization";
+import { loadPublicMenu } from "@/lib/supabase-data";
+import { useCart } from "@/lib/store";
+import type { CustomerOrderHistory, CustomerProfile } from "@/lib/types";
 
 export const Route = createFileRoute("/meus-pedidos")({
   head: () => ({
@@ -19,6 +23,9 @@ export const Route = createFileRoute("/meus-pedidos")({
 
 function MyOrdersPage() {
   const [customer, setCustomer] = useState<CustomerProfile | null>(null);
+  const [repeatingOrderId, setRepeatingOrderId] = useState<string | null>(null);
+  const { addItem, clearItems } = useCart();
+  const navigate = useNavigate();
 
   useEffect(() => {
     getCurrentCustomer()
@@ -27,6 +34,40 @@ function MyOrdersPage() {
   }, []);
 
   const orders = customer?.orders ?? [];
+
+  async function repeatOrder(order: CustomerOrderHistory) {
+    setRepeatingOrderId(order.id);
+    try {
+      const data = await loadPublicMenu(undefined, order.mode === "mesa" ? "dine_in" : "delivery");
+      const productsByName = new Map(
+        data.products.map((product) => [product.name.trim().toLowerCase(), product]),
+      );
+      let added = 0;
+      clearItems();
+      for (const item of order.items) {
+        const product = productsByName.get(item.name.trim().toLowerCase());
+        if (!product) continue;
+        const selections = getDefaultSelections(product);
+        for (let index = 0; index < item.quantity; index += 1) {
+          addItem(product, selections);
+          added += 1;
+        }
+      }
+      if (!added) {
+        toast.error("Não foi possível repetir os itens disponíveis desse pedido.");
+        return;
+      }
+      if (added < order.items.reduce((sum, item) => sum + item.quantity, 0)) {
+        toast.info("Alguns itens antigos não estão disponíveis e não foram adicionados.");
+      }
+      toast.success("Itens adicionados à sacola.");
+      navigate({ to: "/checkout" });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível repetir o pedido.");
+    } finally {
+      setRepeatingOrderId(null);
+    }
+  }
 
   return (
     <div className="min-h-screen">
@@ -100,15 +141,24 @@ function MyOrdersPage() {
                   </p>
                 )}
 
-                <div className="mt-4 flex items-center justify-between gap-3">
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                   <span className="font-black text-primary">{formatPrice(order.total)}</span>
-                  <button
-                    disabled
-                    className="inline-flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs font-bold opacity-60"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Pedir novamente
-                  </button>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button asChild size="sm" className="bg-gradient-primary font-bold">
+                      <Link to="/acompanhar/$id" params={{ id: order.id }}>
+                        <ClipboardList className="mr-1.5 h-4 w-4" />
+                        Acompanhar pedido
+                      </Link>
+                    </Button>
+                    <button
+                      onClick={() => repeatOrder(order)}
+                      disabled={repeatingOrderId === order.id}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-secondary px-2.5 py-1.5 text-[11px] font-bold hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      {repeatingOrderId === order.id ? "Adicionando..." : "Pedir novamente"}
+                    </button>
+                  </div>
                 </div>
               </article>
             ))}

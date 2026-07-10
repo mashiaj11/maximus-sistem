@@ -60,6 +60,10 @@ export interface Order {
   delivery_fee_snapshot?: number;
   courierFee?: number;
   deliveryDistanceKm?: number;
+  deliveryZoneId?: string;
+  deliveryZoneName?: string;
+  deliveryEstimatedTime?: number;
+  deliveryCalculationMethod?: string;
   driverEarnedValue?: number;
   driver_earned_value?: number;
   customerAddressText?: string;
@@ -162,6 +166,9 @@ export interface ProductOptionChoice {
   name: string;
   priceDelta: number;
   active: boolean;
+  isNegativeChoice?: boolean;
+  maxQuantity?: number;
+  sortOrder?: number;
 }
 
 export interface ProductOptionGroup {
@@ -171,6 +178,9 @@ export interface ProductOptionGroup {
   required: boolean;
   minChoices: number;
   maxChoices: number;
+  decisionRequired?: boolean;
+  active?: boolean;
+  sortOrder?: number;
   choices: ProductOptionChoice[];
 }
 
@@ -191,7 +201,22 @@ export type PrintJobStatus =
   | "failed"
   | "simulated"
   | "cancelled";
-export type PrintJobDestination = "kitchen" | "cashier" | "bar" | "custom";
+export type PrintJobDestination = "kitchen" | "cashier" | "bar" | "dispatch" | "custom";
+
+export type PrintSectorKey = "cashier" | "kitchen" | "bar" | "dispatch";
+
+export interface PrintSectorSettings {
+  enabled: boolean;
+  label: string;
+  printerName: string;
+}
+
+export interface PrintSectorSettingsMap {
+  cashier?: PrintSectorSettings;
+  kitchen?: PrintSectorSettings;
+  bar?: PrintSectorSettings;
+  dispatch?: PrintSectorSettings;
+}
 
 export type TableStatus = "livre" | "ocupada" | "pedido_ativo";
 
@@ -218,6 +243,9 @@ export interface KitchenPrintSettings {
   printerPort: number;
   printerType: KitchenPrinterType;
   copies: number;
+  enabled?: boolean;
+  autoPrint?: boolean;
+  sectors?: PrintSectorSettingsMap;
 }
 
 export type WhatsappStatusMessages = Record<OrderStatus, string>;
@@ -308,6 +336,17 @@ export interface DeliveryRule {
   estimatedMinutes: number;
   deliveryFee: number;
   isActive: boolean;
+}
+
+export interface DeliveryZone {
+  id: string;
+  unitId: UnitId;
+  name: string;
+  fee: number;
+  estimatedTimeMin?: number | null;
+  estimatedTimeMax?: number | null;
+  isActive: boolean;
+  sortOrder: number;
 }
 
 export type DeliverySettlementStatus = "open" | "paid" | "cancelled";

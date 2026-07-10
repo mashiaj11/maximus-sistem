@@ -130,7 +130,7 @@ function nextActionLabel(order: Order) {
   if (order.status === "accepted") return "Iniciar produção";
   if (order.status === "in_preparation") return "Marcar pronto";
   if (READY_STATUSES.includes(order.status) && order.type === "delivery")
-    return "Escolher entregador";
+    return "Saiu para entrega";
   if (READY_STATUSES.includes(order.status) && order.type === "mesa")
     return "Marcar entregue na mesa";
   if (READY_STATUSES.includes(order.status)) return "Liberar retirada";
@@ -151,12 +151,10 @@ function PedidoCard({
   expanded: boolean;
   onToggleExpanded: () => void;
 }) {
-  const { updateStatus, advanceStatus, setPayment, selectedUnit } = useAdmin();
+  const { updateStatus, advanceStatus, setPayment } = useAdmin();
   const note = shortNote(order);
   const isReady = READY_STATUSES.includes(order.status);
   const isOut = OUT_STATUSES.includes(order.status);
-  const driverPanelEnabled = selectedUnit?.driverPanelSettings?.enabled ?? false;
-  const blockedByDriverPanel = isOut && order.type === "delivery" && driverPanelEnabled;
   const blockedByPayment = order.paymentStatus !== "confirmed";
   const courierName = assignedCourierName(order, couriers);
   const hasAssignedCourier = order.type === "delivery" && Boolean(assignedCourierId(order));
@@ -181,8 +179,8 @@ function PedidoCard({
       );
       return;
     }
-    if (isReady && order.type === "delivery" && order.paymentStatus === "confirmed") {
-      onAssignCourier(order);
+    if (isReady && order.type === "delivery") {
+      updateStatus(order.id, "out_for_delivery");
       return;
     }
     if (isReady) {
@@ -321,7 +319,7 @@ function PedidoCard({
                       event.stopPropagation();
                       runPrimaryAction();
                     }}
-                    disabled={blockedByPayment || blockedByDriverPanel}
+                    disabled={blockedByPayment}
                     className={`inline-flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-extrabold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
                       isOut ? "bg-emerald-600" : "bg-primary"
                     }`}
@@ -335,11 +333,6 @@ function PedidoCard({
                       <ArrowRight className="h-3.5 w-3.5" />
                     )}
                   </button>
-                )}
-                {blockedByDriverPanel && (
-                  <p className="mt-1.5 rounded-md bg-secondary px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">
-                    Painel do entregador ativo: a entrega deve ser concluída pelo entregador.
-                  </p>
                 )}
               </div>
             )

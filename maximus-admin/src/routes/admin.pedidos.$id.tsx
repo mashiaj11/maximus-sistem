@@ -4,7 +4,6 @@ import { ArrowLeft, MapPin, Utensils, Check, Printer, X } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import { StatusBadge, TypeBadge, PaymentBadge } from "@/admin/components/Badges";
-import { DeliveryRouteMap } from "@/admin/components/MapView";
 import { useAdmin, formatBRL, formatTime } from "@/admin/store";
 import { STATUS_FLOW, STATUS_LABELS } from "@/admin/data/statuses";
 import { buildKitchenReceiptHtml, printRenderedHtml } from "@/admin/printing";
@@ -101,7 +100,7 @@ function PedidoDetalhePage() {
     <div>
       <Link
         to="/admin/pedidos"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"
+        className="mb-3 inline-flex items-center gap-1 text-xs font-bold text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" /> Voltar
       </Link>
@@ -117,14 +116,14 @@ function PedidoDetalhePage() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-3">
         {/* Itens */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h2 className="text-lg font-semibold mb-4">Itens do pedido</h2>
+        <div className="space-y-4 lg:col-span-2">
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-3 text-base font-extrabold">Itens</h2>
             <ul className="divide-y divide-border">
               {order.items.map((it) => (
-                <li key={it.id} className="py-3 first:pt-0 last:pb-0">
+                <li key={it.id} className="py-2.5 first:pt-0 last:pb-0">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-medium">
@@ -150,28 +149,28 @@ function PedidoDetalhePage() {
                 </li>
               ))}
             </ul>
-            <div className="mt-4 flex justify-between border-t border-border pt-4 text-lg font-bold">
+            <div className="mt-3 flex justify-between border-t border-border pt-3 text-base font-bold">
               <span>Total</span>
               <span>{formatBRL(order.total)}</span>
             </div>
           </div>
 
           {order.notes && (
-            <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="font-semibold mb-2">Observações</h3>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <h3 className="mb-2 font-semibold">Observações</h3>
               <p className="text-sm text-muted-foreground">{order.notes}</p>
             </div>
           )}
 
           {/* Alterar status */}
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h3 className="font-semibold mb-4">Alterar status</h3>
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h3 className="mb-3 font-semibold">Status</h3>
             <div className="flex flex-wrap gap-2">
               {flow.map((s) => (
                 <button
                   key={s}
                   onClick={() => updateStatus(order.id, s)}
-                  className={`rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                  className={`rounded-md px-2.5 py-1.5 text-xs font-bold transition-colors ${
                     s === order.status
                       ? "bg-primary text-primary-foreground"
                       : "bg-secondary text-muted-foreground hover:text-foreground"
@@ -205,7 +204,7 @@ function PedidoDetalhePage() {
                   })
                   .finally(() => setReprinting(false));
               }}
-              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm font-bold hover:bg-accent disabled:opacity-50"
+              className="mt-3 inline-flex items-center gap-2 rounded-md bg-secondary px-3 py-1.5 text-xs font-bold hover:bg-accent disabled:opacity-50"
             >
               <Printer className="h-4 w-4" />
               {reprinting ? "Reimprimindo..." : "Reimprimir"}
@@ -214,9 +213,9 @@ function PedidoDetalhePage() {
         </div>
 
         {/* Sidebar info */}
-        <div className="space-y-6">
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h3 className="font-semibold mb-3">Cliente</h3>
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h3 className="mb-2 font-semibold">Cliente</h3>
             <p className="text-sm">{order.customerName}</p>
             {order.customerPhone && (
               <p className="text-sm text-muted-foreground">{order.customerPhone}</p>
@@ -224,8 +223,8 @@ function PedidoDetalhePage() {
           </div>
 
           {order.recipientName && (
-            <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="font-semibold mb-3">Destinatário</h3>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <h3 className="mb-2 font-semibold">Destinatário</h3>
               <p className="text-sm">{order.recipientName}</p>
               {order.recipientPhone && (
                 <p className="text-sm text-muted-foreground">{order.recipientPhone}</p>
@@ -237,8 +236,8 @@ function PedidoDetalhePage() {
           )}
 
           {order.type === "delivery" && order.address && (
-            <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="font-semibold mb-3 flex items-center gap-2">
+            <div className="rounded-lg border border-border bg-card p-4">
+              <h3 className="mb-2 flex items-center gap-2 font-semibold">
                 <MapPin className="h-4 w-4 text-primary" /> Endereço
               </h3>
               <p className="text-sm text-muted-foreground">{order.address}</p>
@@ -272,7 +271,7 @@ function PedidoDetalhePage() {
               </p>
               {hasDeliveryLocation && (
                 <a
-                  href={`https://www.openstreetmap.org/?mlat=${deliveryLat}&mlon=${deliveryLng}#map=16/${deliveryLat}/${deliveryLng}`}
+                  href={`https://www.google.com/maps/search/?api=1&query=${deliveryLat},${deliveryLng}`}
                   target="_blank"
                   rel="noreferrer"
                   className="mt-3 inline-flex rounded-lg bg-secondary px-3 py-2 text-xs font-bold hover:bg-accent"
@@ -283,54 +282,20 @@ function PedidoDetalhePage() {
             </div>
           )}
 
-          {order.type === "delivery" && hasDeliveryLocation && (
-            <div className="rounded-xl border border-border bg-card p-3">
-              <DeliveryRouteMap
-                className="h-56 w-full"
-                origin={
-                  unit
-                    ? {
-                        latitude: unit.latitude,
-                        longitude: unit.longitude,
-                        label: unit.name,
-                        color: "#f97316",
-                      }
-                    : undefined
-                }
-                destination={{
-                  latitude: deliveryLat,
-                  longitude: deliveryLng,
-                  label: "Cliente",
-                  color: "#22c55e",
-                }}
-                driver={
-                  hasDriverLocation
-                    ? {
-                        latitude: driverLat,
-                        longitude: driverLng,
-                        label: "Entregador",
-                        color: "#2563eb",
-                      }
-                    : undefined
-                }
-              />
-            </div>
-          )}
-
           {order.type === "mesa" && order.tableNumber != null && (
-            <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="font-semibold mb-3 flex items-center gap-2">
+            <div className="rounded-lg border border-border bg-card p-4">
+              <h3 className="mb-2 flex items-center gap-2 font-semibold">
                 <Utensils className="h-4 w-4 text-primary" /> Mesa
               </h3>
-              <p className="text-2xl font-bold">
+              <p className="text-xl font-bold">
                 Mesa {String(order.tableNumber).padStart(2, "0")}
               </p>
             </div>
           )}
 
           {/* Pagamento */}
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h3 className="font-semibold mb-3">Pagamento</h3>
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h3 className="mb-2 font-semibold">Pagamento</h3>
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-muted-foreground">
                 {PAYMENT_LABELS[order.paymentMethod]}

@@ -6,6 +6,7 @@ import type {
   CustomerAddress,
   CustomerOrderHistory,
   CustomerProfile,
+  DeliveryZone,
   FoodVariant,
   OrderInfo,
   OrderTrackMode,
@@ -115,9 +116,15 @@ type AddressRow = {
   number: string | null;
   complement: string | null;
   neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
   reference: string | null;
   latitude: number | null;
   longitude: number | null;
+  delivery_zone_id: string | null;
+  delivery_zone_name: string | null;
+  delivery_fee_snapshot: number | null;
   is_primary: boolean;
   is_active?: boolean | null;
   deleted_at?: string | null;
@@ -146,6 +153,10 @@ type OrderRow = {
   customer_lng: number | null;
   customer_address_text: string | null;
   delivery_distance_km: number | null;
+  delivery_zone_id: string | null;
+  delivery_zone_name: string | null;
+  delivery_estimated_time: number | null;
+  delivery_calculation_method: string | null;
   delivery_fee: number | null;
   delivery_fee_snapshot: number | null;
   minimum_order_value: number | null;
@@ -165,6 +176,7 @@ type OrderRow = {
     reference: string | null;
     latitude: number | null;
     longitude: number | null;
+    delivery_zone_name?: string | null;
   } | null;
 };
 
@@ -253,6 +265,12 @@ function mapOptionGroups(value: unknown): ProductOptionGroup[] {
       title?: string;
       type?: "single" | "multiple";
       required?: boolean;
+      isRequired?: boolean;
+      decisionRequired?: boolean;
+      decision_required?: boolean;
+      active?: boolean;
+      sortOrder?: number;
+      sort_order?: number;
       minChoices?: number;
       maxChoices?: number;
       min?: number;
@@ -264,6 +282,12 @@ function mapOptionGroups(value: unknown): ProductOptionGroup[] {
         priceDelta?: number;
         price?: number;
         active?: boolean;
+        isNegativeChoice?: boolean;
+        is_negative_choice?: boolean;
+        maxQuantity?: number;
+        max_quantity?: number;
+        sortOrder?: number;
+        sort_order?: number;
       }>;
       options?: Array<{
         id?: string;
@@ -272,6 +296,12 @@ function mapOptionGroups(value: unknown): ProductOptionGroup[] {
         priceDelta?: number;
         price?: number;
         active?: boolean;
+        isNegativeChoice?: boolean;
+        is_negative_choice?: boolean;
+        maxQuantity?: number;
+        max_quantity?: number;
+        sortOrder?: number;
+        sort_order?: number;
       }>;
     };
 
@@ -280,18 +310,24 @@ function mapOptionGroups(value: unknown): ProductOptionGroup[] {
       id: item.id ?? item.name ?? crypto.randomUUID(),
       title: item.title ?? item.name ?? "Opções",
       type: item.type ?? (Number(item.maxChoices ?? item.max ?? 1) > 1 ? "multiple" : "single"),
-      required: Boolean(item.required),
+      required: Boolean(item.required ?? item.isRequired),
       min: item.min ?? item.minChoices,
       max: item.max ?? item.maxChoices,
+      decisionRequired: Boolean(item.decisionRequired ?? item.decision_required),
+      active: item.active !== false,
+      sortOrder: item.sortOrder ?? item.sort_order ?? 0,
       options: choices
         .filter((choice) => choice.active !== false)
+        .sort((a, b) => (a.sortOrder ?? a.sort_order ?? 0) - (b.sortOrder ?? b.sort_order ?? 0))
         .map((choice) => ({
           id: choice.id ?? choice.name ?? crypto.randomUUID(),
           label: choice.label ?? choice.name ?? "Opção",
           price: choice.price ?? choice.priceDelta,
+          isNegativeChoice: Boolean(choice.isNegativeChoice ?? choice.is_negative_choice),
+          maxQuantity: choice.maxQuantity ?? choice.max_quantity ?? 1,
         })),
     };
-  });
+  }).filter((group) => group.active !== false).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 }
 
 function mapAddress(row: AddressRow): CustomerAddress {
@@ -301,10 +337,17 @@ function mapAddress(row: AddressRow): CustomerAddress {
     street: row.street,
     number: row.number ?? "",
     neighborhood: row.neighborhood ?? "",
+    city: row.city ?? undefined,
+    state: row.state ?? undefined,
+    postalCode: row.postal_code ?? undefined,
     complement: row.complement ?? undefined,
     reference: row.reference ?? undefined,
     latitude: row.latitude ?? undefined,
     longitude: row.longitude ?? undefined,
+    deliveryZoneId: row.delivery_zone_id ?? undefined,
+    deliveryZoneName: row.delivery_zone_name ?? undefined,
+    deliveryFeeSnapshot:
+      row.delivery_fee_snapshot == null ? undefined : Number(row.delivery_fee_snapshot),
     isDefault: row.is_primary,
     createdAt: new Date(row.created_at).getTime(),
     updatedAt: new Date(row.updated_at).getTime(),
@@ -324,8 +367,8 @@ function statusLabel(status: string) {
     in_preparation: "Em produção",
     ready: "Pedido pronto",
     out_for_delivery: "Saiu para entrega",
-    driver_on_way: "Entregador a caminho",
-    driver_nearby: "Entregador a 500 metros",
+    driver_on_way: "Pedido chegou",
+    driver_nearby: "Pedido chegou",
     arrived: "Pedido chegou",
     ready_for_pickup: "Pronto para retirada",
     delivered_to_table: "Entregue na mesa",
@@ -531,6 +574,15 @@ export async function loadPublicUnits() {
   }));
 }
 
+export async function loadActivePublicUnit(unitSlug?: string) {
+  const units = await loadPublicUnits();
+  return (
+    (unitSlug ? units.find((unit) => unit.slug === unitSlug || unit.id === unitSlug) : null) ??
+    units[0] ??
+    null
+  );
+}
+
 function productGlobalKey(product: ProductRow) {
   return [
     product.category_id,
@@ -685,7 +737,7 @@ export async function loadPublicTables(unitSlug: string): Promise<PublicTable[]>
   const supabase = getSupabaseClient();
   const units = (await queryOrThrow(
     "units",
-    supabase.from("units").select("id, slug").eq("is_open", true),
+    supabase.from("units").select("id, slug").eq("active", true),
   )) as Array<Pick<UnitRow, "id" | "slug">>;
   const unit = units.find((item) => item.slug === unitSlug || item.id === unitSlug);
   if (!unit) return [];
@@ -711,7 +763,7 @@ export async function findPublicTable(unitSlug: string, tableNumber: string) {
   const supabase = getSupabaseClient();
   const units = (await queryOrThrow(
     "units",
-    supabase.from("units").select("id, slug").eq("is_open", true),
+    supabase.from("units").select("id, slug").eq("active", true),
   )) as Array<Pick<UnitRow, "id" | "slug">>;
   const unit = units.find((item) => item.slug === unitSlug || item.id === unitSlug);
   if (!unit) return null;
@@ -754,6 +806,38 @@ export async function loadDeliveryRules(unitId: string) {
   }));
 }
 
+export async function loadDeliveryZones(unitId: string): Promise<DeliveryZone[]> {
+  const rows = (await queryOrThrow(
+    "delivery_zones",
+    getSupabaseClient()
+      .from("delivery_zones")
+      .select("id, unit_id, name, fee, estimated_time_min, estimated_time_max, active, sort_order")
+      .eq("unit_id", unitId)
+      .eq("active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+  )) as Array<{
+    id: string;
+    unit_id: string;
+    name: string;
+    fee: number;
+    estimated_time_min: number | null;
+    estimated_time_max: number | null;
+    active: boolean;
+    sort_order: number;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    unitId: row.unit_id,
+    name: row.name,
+    fee: Number(row.fee),
+    estimatedTimeMin: row.estimated_time_min,
+    estimatedTimeMax: row.estimated_time_max,
+    isActive: row.active,
+    sortOrder: row.sort_order,
+  }));
+}
+
 export async function getCustomerByPhone(phone: string): Promise<CustomerProfile | null> {
   const cleanPhone = normalizePhone(phone);
   if (!cleanPhone) return null;
@@ -774,7 +858,7 @@ export async function getCustomerByPhone(phone: string): Promise<CustomerProfile
       supabase
         .from("customer_addresses")
         .select(
-          "id, customer_id, label, street, number, complement, neighborhood, reference, latitude, longitude, is_primary, created_at, updated_at",
+          "id, customer_id, label, street, number, complement, neighborhood, city, state, postal_code, reference, latitude, longitude, delivery_zone_id, delivery_zone_name, delivery_fee_snapshot, is_primary, created_at, updated_at",
         )
         .eq("customer_id", customer.id)
         .eq("is_active", true)
@@ -900,9 +984,15 @@ export async function saveAddressToSupabase(
     number: address.number,
     complement: address.complement ?? null,
     neighborhood: address.neighborhood,
+    city: address.city ?? "Santarem",
+    state: address.state ?? "PA",
+    postal_code: address.postalCode ?? null,
     reference: address.reference ?? null,
     latitude: address.latitude ?? null,
     longitude: address.longitude ?? null,
+    delivery_zone_id: address.deliveryZoneId ?? null,
+    delivery_zone_name: address.deliveryZoneName ?? address.neighborhood ?? null,
+    delivery_fee_snapshot: address.deliveryFeeSnapshot ?? null,
     is_primary: address.isDefault,
     is_active: true,
     deleted_at: null,
@@ -1023,8 +1113,13 @@ export async function createOrderInSupabase(params: {
   const supabase = getSupabaseClient();
   const unitRows = (await queryOrThrow(
     "order unit",
-    supabase.from("units").select("id, is_open, business_hours").eq("id", params.unitId).limit(1),
-  )) as Array<Pick<UnitRow, "id" | "is_open" | "business_hours">>;
+    supabase
+      .from("units")
+      .select("id, is_open, business_hours, active")
+      .eq("id", params.unitId)
+      .eq("active", true)
+      .limit(1),
+  )) as Array<Pick<UnitRow, "id" | "is_open" | "business_hours" | "active">>;
   const unit = unitRows[0];
   if (!unit || !unit.is_open || !isOpenByBusinessHours(unit.business_hours)) {
     throw new Error("A unidade selecionada está fechada no momento.");
@@ -1060,10 +1155,14 @@ export async function createOrderInSupabase(params: {
         delivery_fee: deliveryFee,
         delivery_fee_snapshot: deliveryFee,
         delivery_range_id: params.deliveryRangeId ?? params.order.deliveryRangeId ?? null,
+        delivery_zone_id: params.order.deliveryZoneId ?? null,
+        delivery_zone_name: params.order.deliveryZoneName ?? null,
         driver_earned_value: deliveryFee,
         delivery_payout_amount: deliveryFee,
         minimum_order_value: params.order.minimumOrderValue ?? 0,
         delivery_distance_km: params.deliveryDistanceKm ?? null,
+        delivery_estimated_time: params.order.deliveryEstimatedTime ?? null,
+        delivery_calculation_method: params.order.deliveryCalculationMethod ?? null,
         customer_lat: params.order.customerLat ?? null,
         customer_lng: params.order.customerLng ?? null,
         customer_address_text: params.order.customerAddressText ?? null,
@@ -1139,7 +1238,7 @@ export async function getOrderInfo(orderId: string): Promise<OrderInfo | null> {
     getSupabaseClient()
       .from("orders")
       .select(
-        "id, unit_id, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, recipient_name, recipient_phone, recipient_notes, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_distance_km, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, total, created_at, units(slug, name), customer_addresses(street, number, neighborhood, complement, reference, latitude, longitude)",
+        "id, unit_id, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, recipient_name, recipient_phone, recipient_notes, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_distance_km, delivery_zone_id, delivery_zone_name, delivery_estimated_time, delivery_calculation_method, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, total, created_at, units(slug, name), customer_addresses(street, number, neighborhood, complement, reference, latitude, longitude, delivery_zone_name)",
       )
       .eq("id", orderId)
       .limit(1),
@@ -1167,6 +1266,11 @@ export async function getOrderInfo(orderId: string): Promise<OrderInfo | null> {
     deliveryFee: Number(row.delivery_fee ?? row.delivery_fee_snapshot ?? 0),
     deliveryDistanceKm:
       row.delivery_distance_km == null ? undefined : Number(row.delivery_distance_km),
+    deliveryZoneId: row.delivery_zone_id ?? undefined,
+    deliveryZoneName: row.delivery_zone_name ?? row.customer_addresses?.delivery_zone_name ?? undefined,
+    deliveryEstimatedTime:
+      row.delivery_estimated_time == null ? undefined : Number(row.delivery_estimated_time),
+    deliveryCalculationMethod: row.delivery_calculation_method ?? undefined,
     minimumOrderValue: Number(row.minimum_order_value ?? 0),
     status: row.status,
     deliveryStatus: row.status,

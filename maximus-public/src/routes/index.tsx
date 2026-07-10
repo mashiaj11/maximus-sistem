@@ -28,6 +28,28 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
+const TODAY_KEYS = [
+  "domingo",
+  "segunda",
+  "terca",
+  "quarta",
+  "quinta",
+  "sexta",
+  "sabado",
+] as const;
+
+function getClosedHeroHoursText(units: GeoUnit[]) {
+  const today = TODAY_KEYS[new Date().getDay()];
+  const todayHour = units
+    .map((unit) => unit.businessHours?.find((hour) => hour.day === today && hour.open))
+    .find((hour) => hour?.periods.some((period) => period.opensAt && period.closesAt));
+  const periods = todayHour?.periods
+    .filter((period) => period.opensAt && period.closesAt)
+    .map((period) => `${period.opensAt} às ${period.closesAt}`)
+    .join(", ");
+  return periods ? `Funcionamento: ${periods}` : undefined;
+}
+
 function Index() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [units, setUnits] = useState<GeoUnit[]>([]);
@@ -49,7 +71,11 @@ function Index() {
   return (
     <div className="min-h-screen">
       <SiteHeader />
-      <Hero orderLink="/menu" />
+      <Hero
+        orderLink="/menu"
+        isClosed={allUnitsClosed}
+        closedHoursText={getClosedHeroHoursText(units)}
+      />
 
       {allUnitsClosed && (
         <section className="mx-auto max-w-6xl px-4 pt-10">

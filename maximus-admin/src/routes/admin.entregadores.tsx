@@ -101,9 +101,9 @@ function EntregadoresPage() {
     <div>
       <PageHeader
         title="Entregadores"
-        subtitle={`Equipe de entrega · ${selectedUnit?.name ?? "Unidade"}`}
+        subtitle={selectedUnit?.name ?? "Unidade"}
       />
-      <div className="mb-4 flex justify-end">
+      <div className="mb-3 flex justify-end">
         <button
           type="button"
           onClick={async () => {
@@ -123,14 +123,14 @@ function EntregadoresPage() {
               setBusy(false);
             }
           }}
-          className="rounded-lg bg-destructive px-4 py-2 text-sm font-extrabold text-white"
+          className="rounded-md bg-destructive px-3 py-1.5 text-xs font-extrabold text-white"
         >
           Remover todos os entregadores inativos
         </button>
       </div>
 
       <form
-        className="mb-6 grid gap-3 rounded-xl border border-border bg-card p-4 md:grid-cols-[1fr_150px_140px_120px_130px_auto]"
+        className="mb-4 grid gap-2 rounded-lg border border-border bg-card p-3 md:grid-cols-[1fr_150px_140px_120px_130px_auto]"
         onSubmit={async (event) => {
           event.preventDefault();
           if (!name.trim()) return;
@@ -195,7 +195,7 @@ function EntregadoresPage() {
         </button>
       </form>
 
-      <section className="mb-6 overflow-hidden rounded-xl border border-border">
+      <section className="mb-4 overflow-hidden rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead className="bg-card text-muted-foreground">
             <tr className="text-left">
@@ -359,10 +359,10 @@ function EntregadoresPage() {
         </table>
       </section>
 
-      <section className="rounded-xl border border-border bg-card p-5">
+      <section className="rounded-lg border border-border bg-card p-4">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 className="text-xl font-black">Resumo do dia</h2>
+            <h2 className="text-base font-black">Resumo do dia</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Calculado automaticamente pelos pedidos delivery finalizados.
             </p>
@@ -378,7 +378,7 @@ function EntregadoresPage() {
           {summary.map(({ courier, deliveries, total }) => (
             <div
               key={courier.id}
-              className={`rounded-xl border bg-background p-4 ${getDriverColor(courier.id).border}`}
+              className={`rounded-lg border bg-background p-3 ${getDriverColor(courier.id).border}`}
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>

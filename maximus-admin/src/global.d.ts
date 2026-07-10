@@ -1,12 +1,21 @@
 export {};
 
 declare global {
+  type MaximusPrintSectorKey = "cashier" | "kitchen" | "bar" | "dispatch";
+
+  interface MaximusLocalPrinter {
+    name: string;
+    displayName?: string;
+    status?: number | string;
+    isDefault?: boolean;
+  }
+
   interface MaximusPrinterConfig {
     id: string;
     name: string;
     deviceName: string;
     unitId: string;
-    destination: "kitchen" | "cashier" | "bar" | "custom";
+    destination: MaximusPrintSectorKey | "custom";
     connectionMode?: "system" | "network";
     networkHost?: string;
     networkPort?: number;
@@ -22,6 +31,17 @@ declare global {
   interface MaximusPrintSettings {
     version: number;
     printers: MaximusPrinterConfig[];
+  }
+
+  interface MaximusPrinterBridge {
+    listPrinters: () => Promise<{
+      ok: boolean;
+      printers?: MaximusLocalPrinter[];
+      error?: string;
+    }>;
+    testPrinter: (
+      payload: Record<string, unknown>,
+    ) => Promise<{ ok: boolean; mode?: string; error?: string }>;
   }
 
   type MaximusUpdaterStatus =
@@ -53,12 +73,7 @@ declare global {
       platform: string;
       listPrinters: () => Promise<{
         ok: boolean;
-        printers?: Array<{
-          name: string;
-          displayName?: string;
-          status?: number;
-          isDefault?: boolean;
-        }>;
+        printers?: MaximusLocalPrinter[];
         error?: string;
       }>;
       getPrintSettings: () => Promise<MaximusPrintSettings>;
@@ -81,5 +96,6 @@ declare global {
         onStateChanged: (callback: (state: MaximusUpdaterState) => void) => () => void;
       };
     };
+    maximusPrinter?: MaximusPrinterBridge;
   }
 }

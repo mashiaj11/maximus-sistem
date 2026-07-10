@@ -5,6 +5,7 @@ import type {
   Courier,
   CourierStatus,
   DeliveryRule,
+  DeliveryZone,
   KitchenPrintSettings,
   Order,
   OrderItem,
@@ -112,6 +113,17 @@ type DeliveryRuleRow = {
   active: boolean;
 };
 
+type DeliveryZoneRow = {
+  id: string;
+  unit_id: string;
+  name: string;
+  fee: number;
+  estimated_time_min: number | null;
+  estimated_time_max: number | null;
+  active: boolean;
+  sort_order: number;
+};
+
 type AdminSettingsRow = {
   unit_id: string;
   settings: unknown;
@@ -181,6 +193,10 @@ type OrderRow = {
   driver_earned_value: number | null;
   delivery_payout_amount: number;
   delivery_distance_km: number | null;
+  delivery_zone_id: string | null;
+  delivery_zone_name: string | null;
+  delivery_estimated_time: number | null;
+  delivery_calculation_method: string | null;
   delivery_lat: number | null;
   delivery_lng: number | null;
   delivery_location_source: Order["deliveryLocationSource"] | null;
@@ -233,6 +249,7 @@ export type SupabaseAdminData = {
   tables: RestaurantTable[];
   couriers: Courier[];
   deliveryRules: DeliveryRule[];
+  deliveryZones: DeliveryZone[];
 };
 
 export type PrintJob = {
@@ -655,6 +672,21 @@ function mapDeliveryRule(row: DeliveryRuleRow, slugById: Map<string, UnitId>): D
   };
 }
 
+function mapDeliveryZone(row: DeliveryZoneRow, slugById: Map<string, UnitId>): DeliveryZone | null {
+  const unitId = slugById.get(row.unit_id);
+  if (!unitId) return null;
+  return {
+    id: row.id,
+    unitId,
+    name: row.name,
+    fee: Number(row.fee),
+    estimatedTimeMin: row.estimated_time_min,
+    estimatedTimeMax: row.estimated_time_max,
+    isActive: row.active,
+    sortOrder: row.sort_order,
+  };
+}
+
 function mapOrder(
   row: OrderRow,
   items: OrderItemRow[],
@@ -726,6 +758,11 @@ function mapOrder(
     driver_earned_value: Number(row.driver_earned_value ?? row.delivery_payout_amount),
     deliveryDistanceKm:
       row.delivery_distance_km == null ? undefined : Number(row.delivery_distance_km),
+    deliveryZoneId: row.delivery_zone_id ?? undefined,
+    deliveryZoneName: row.delivery_zone_name ?? undefined,
+    deliveryEstimatedTime:
+      row.delivery_estimated_time == null ? undefined : Number(row.delivery_estimated_time),
+    deliveryCalculationMethod: row.delivery_calculation_method ?? undefined,
     delivery_lat: row.delivery_lat ?? undefined,
     delivery_lng: row.delivery_lng ?? undefined,
     deliveryLat: row.delivery_lat ?? undefined,
@@ -763,6 +800,28 @@ async function selectOrThrow<T>(
   return data;
 }
 
+function isMissingSchemaError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return (
+    message.includes("Could not find the table") ||
+    message.includes("Could not find the column") ||
+    message.includes("does not exist") ||
+    message.includes("schema cache")
+  );
+}
+
+async function selectOptional<T>(
+  query: PromiseLike<{ data: T | null; error: { message: string } | null }>,
+  fallback: T,
+) {
+  try {
+    return (await selectOrThrow(query)) ?? fallback;
+  } catch (error) {
+    if (isMissingSchemaError(error)) return fallback;
+    throw error;
+  }
+}
+
 export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
   assertConfigured();
   const supabase = getSupabaseClient();
@@ -779,6 +838,7 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
     tables,
     couriers,
     deliveryRules,
+    deliveryZones,
     adminSettings,
   ] = await Promise.all([
     selectOrThrow(
@@ -831,6 +891,14 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
         .select("id, unit_id, max_distance_km, estimated_minutes, delivery_fee, active")
         .order("max_distance_km", { ascending: true }),
     ) as Promise<DeliveryRuleRow[] | null>,
+    selectOptional(
+      supabase
+        .from("delivery_zones")
+        .select("id, unit_id, name, fee, estimated_time_min, estimated_time_max, active, sort_order")
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+      [] as DeliveryZoneRow[],
+    ) as Promise<DeliveryZoneRow[] | null>,
     selectOrThrow(supabase.from("admin_settings").select(ADMIN_SETTINGS_SELECT)) as Promise<
       AdminSettingsRow[] | null
     >,
@@ -843,14 +911,24 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
       availability,
     ]);
   }
-  const orderRows = (await selectOrThrow(
-    supabase
-      .from("orders")
-      .select(
-        "id, unit_id, customer_address_id, table_id, delivery_driver_id, delivery_driver_name, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, recipient_name, recipient_phone, recipient_notes, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_payout_amount, driver_earned_value, delivery_distance_km, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, driver_id, driver_name, payment_confirmed, delivery_completed_by_driver, kitchen_print_status, kitchen_printed_at, out_for_delivery_at, navigation_started_at, delivered_at, subtotal, total, notes, created_at",
-      )
-      .order("created_at", { ascending: false }),
-  )) as OrderRow[];
+  const orderSelectWithZones =
+    "id, unit_id, customer_address_id, table_id, delivery_driver_id, delivery_driver_name, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, recipient_name, recipient_phone, recipient_notes, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_payout_amount, driver_earned_value, delivery_distance_km, delivery_zone_id, delivery_zone_name, delivery_estimated_time, delivery_calculation_method, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, driver_id, driver_name, payment_confirmed, delivery_completed_by_driver, kitchen_print_status, kitchen_printed_at, out_for_delivery_at, navigation_started_at, delivered_at, subtotal, total, notes, created_at";
+  const orderSelectLegacy =
+    "id, unit_id, customer_address_id, table_id, delivery_driver_id, delivery_driver_name, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, recipient_name, recipient_phone, recipient_notes, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_payout_amount, driver_earned_value, delivery_distance_km, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, driver_id, driver_name, payment_confirmed, delivery_completed_by_driver, kitchen_print_status, kitchen_printed_at, out_for_delivery_at, navigation_started_at, delivered_at, subtotal, total, notes, created_at";
+  let orderRows: OrderRow[];
+  try {
+    orderRows = (await selectOrThrow(
+      supabase
+        .from("orders")
+        .select(orderSelectWithZones)
+        .order("created_at", { ascending: false }),
+    )) as OrderRow[];
+  } catch (error) {
+    if (!isMissingSchemaError(error)) throw error;
+    orderRows = (await selectOrThrow(
+      supabase.from("orders").select(orderSelectLegacy).order("created_at", { ascending: false }),
+    )) as OrderRow[];
+  }
   const orderItems = orderRows.length
     ? ((await selectOrThrow(
         supabase
@@ -940,6 +1018,9 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
     deliveryRules: (deliveryRules ?? [])
       .map((rule) => mapDeliveryRule(rule, slugById))
       .filter((rule): rule is DeliveryRule => Boolean(rule)),
+    deliveryZones: (deliveryZones ?? [])
+      .map((zone) => mapDeliveryZone(zone, slugById))
+      .filter((zone): zone is DeliveryZone => Boolean(zone)),
   };
 }
 
@@ -953,7 +1034,9 @@ export async function updateSupabaseOrderStatus(
     .from("orders")
     .update({
       status,
+      delivery_status: status,
       delivered_at: deliveredAt,
+      out_for_delivery_at: status === "out_for_delivery" ? new Date().toISOString() : undefined,
       kitchen_print_status: status === "in_preparation" ? "pending" : undefined,
     })
     .eq("id", orderId);
@@ -1793,5 +1876,63 @@ export async function updateSupabaseDeliveryRule(
 export async function deleteSupabaseDeliveryRule(ruleId: string) {
   assertConfigured();
   const { error } = await getSupabaseClient().from("delivery_fee_rules").delete().eq("id", ruleId);
+  if (error) throw new Error(error.message);
+}
+
+export async function insertSupabaseDeliveryZone(
+  unitId: UnitId,
+  zone: Omit<DeliveryZone, "id">,
+): Promise<DeliveryZone> {
+  assertConfigured();
+  const supabase = getSupabaseClient();
+  const unitRow = (await selectOrThrow(
+    supabase.from("units").select("id, slug").eq("slug", unitId).single(),
+  )) as UnitRow;
+  const { data, error } = await supabase
+    .from("delivery_zones")
+    .insert({
+      unit_id: unitRow.id,
+      name: zone.name,
+      fee: zone.fee,
+      estimated_time_min: zone.estimatedTimeMin ?? null,
+      estimated_time_max: zone.estimatedTimeMax ?? null,
+      active: zone.isActive,
+      sort_order: zone.sortOrder,
+    })
+    .select("id, unit_id, name, fee, estimated_time_min, estimated_time_max, active, sort_order")
+    .single();
+  if (error) throw new Error(error.message);
+  const mapped = mapDeliveryZone(data as DeliveryZoneRow, new Map([[unitRow.id, unitRow.slug]]));
+  if (!mapped) throw new Error("Região criada sem unidade valida.");
+  return mapped;
+}
+
+export async function updateSupabaseDeliveryZone(
+  zoneId: string,
+  patch: Partial<
+    Pick<
+      DeliveryZone,
+      "name" | "fee" | "estimatedTimeMin" | "estimatedTimeMax" | "isActive" | "sortOrder"
+    >
+  >,
+) {
+  assertConfigured();
+  const { error } = await getSupabaseClient()
+    .from("delivery_zones")
+    .update({
+      name: patch.name,
+      fee: patch.fee,
+      estimated_time_min: patch.estimatedTimeMin,
+      estimated_time_max: patch.estimatedTimeMax,
+      active: patch.isActive,
+      sort_order: patch.sortOrder,
+    })
+    .eq("id", zoneId);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteSupabaseDeliveryZone(zoneId: string) {
+  assertConfigured();
+  const { error } = await getSupabaseClient().from("delivery_zones").delete().eq("id", zoneId);
   if (error) throw new Error(error.message);
 }

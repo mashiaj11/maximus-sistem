@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { ArrowLeft, Minus, Plus, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { FoodArt } from "./FoodArt";
 import { formatPrice } from "@/lib/format";
 import { useCart } from "@/lib/store";
@@ -25,14 +26,17 @@ import {
 import type { Product, ProductOptionGroup, SelectedOptions } from "@/lib/types";
 
 export function ProductCard({ product }: { product: Product }) {
-  const { addItem, inc, items } = useCart();
+  const { addItem, dec, inc, items } = useCart();
   const [open, setOpen] = useState(false);
+  const [addedOpen, setAddedOpen] = useState(false);
   const [note, setNote] = useState("");
   const [selections, setSelections] = useState<SelectedOptions>(() =>
     getDefaultSelections(product),
   );
+  const [addedItemId, setAddedItemId] = useState<string | null>(null);
   const total = useMemo(() => calculateUnitPrice(product, selections), [product, selections]);
   const errors = useMemo(() => getSelectionErrors(product, selections), [product, selections]);
+  const addedItem = items.find((item) => item.id === addedItemId);
 
   function resetForm() {
     setSelections(getDefaultSelections(product));
@@ -61,7 +65,8 @@ export function ProductCard({ product }: { product: Product }) {
                 onClick={() => {
                   inc(existing.id);
                   toast.dismiss(toastId);
-                  toast.success(`${product.name} adicionado ao pedido`);
+                  setAddedItemId(existing.id);
+                  setAddedOpen(true);
                   resetForm();
                   setOpen(false);
                 }}
@@ -88,7 +93,8 @@ export function ProductCard({ product }: { product: Product }) {
     }
 
     addItem(product, selections, note);
-    toast.success(`${product.name} adicionado ao pedido`);
+    setAddedItemId(cartItemId);
+    setAddedOpen(true);
     resetForm();
     setOpen(false);
   }
@@ -134,15 +140,41 @@ export function ProductCard({ product }: { product: Product }) {
                 <span className="hidden sm:inline">Adicionar</span>
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>{product.name}</DialogTitle>
-                <DialogDescription>
-                  {product.description} • Base {formatPrice(product.price)}
+            <DialogContent className="max-h-[92svh] overflow-y-auto p-0 sm:max-w-2xl">
+              <DialogHeader className="sticky top-0 z-10 border-b border-border bg-background px-4 py-3 text-left">
+                <DialogTitle className="flex items-center gap-2 text-base">
+                  <ArrowLeft className="h-4 w-4" /> Detalhes do produto
+                </DialogTitle>
+                <DialogDescription className="sr-only">
+                  Escolha adicionais e observações do produto.
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="space-y-5">
+              <div className="space-y-5 px-4 pb-2">
+                <div className="overflow-hidden rounded-lg border border-border bg-card">
+                  <div className="aspect-[16/10] bg-secondary">
+                    {product.imageUrl || product.image_url ? (
+                      <img
+                        src={product.imageUrl ?? product.image_url}
+                        alt={product.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <FoodArt variant={product.svg} className="h-full w-full p-6" />
+                    )}
+                  </div>
+                  <div className="p-4">
+                    <h2 className="text-xl font-black">{product.name}</h2>
+                    <p className="mt-1 text-lg font-extrabold text-primary">
+                      {formatPrice(product.price)}
+                    </p>
+                    {product.description && (
+                      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                        {product.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
                 {(product.optionGroups ?? []).map((group) => (
                   <OptionGroupField
                     key={group.id}
@@ -162,13 +194,83 @@ export function ProductCard({ product }: { product: Product }) {
                 </div>
               </div>
 
-              <DialogFooter>
+              <DialogFooter className="sticky bottom-0 border-t border-border bg-background p-4">
+                <div className="w-full space-y-2">
+                  {errors[0] && (
+                    <p className="text-center text-xs font-semibold text-destructive">
+                      {errors[0]}
+                    </p>
+                  )}
+                  <Button
+                    onClick={confirm}
+                    className="w-full bg-gradient-primary font-bold"
+                    size="lg"
+                    disabled={errors.length > 0}
+                  >
+                    Avançar • {formatPrice(total)}
+                  </Button>
+                </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={addedOpen} onOpenChange={setAddedOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>{product.name} adicionado ao carrinho!</DialogTitle>
+                <DialogDescription>
+                  Revise a quantidade ou avance para finalizar o pedido.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="rounded-xl border border-border bg-card p-4">
+                <p className="font-black">{product.name}</p>
+                {addedItem?.note && (
+                  <p className="mt-2 text-sm text-muted-foreground">Obs.: {addedItem.note}</p>
+                )}
+                <div className="mt-4 flex items-center justify-between">
+                  <span className="text-sm font-bold text-muted-foreground">Quantidade</span>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="outline"
+                      disabled={!addedItem}
+                      onClick={() => addedItem && inc(addedItem.id)}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                    <span className="w-6 text-center font-black">{addedItem?.quantity ?? 1}</span>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="outline"
+                      disabled={!addedItem}
+                      onClick={() => addedItem && dec(addedItem.id)}
+                    >
+                      <Minus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter className="grid gap-2 sm:grid-cols-2">
                 <Button
-                  onClick={confirm}
-                  className="w-full bg-gradient-primary font-bold"
-                  size="lg"
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setAddedOpen(false);
+                    setOpen(false);
+                  }}
                 >
-                  Adicionar ao pedido • {formatPrice(total)}
+                  Continuar comprando
+                </Button>
+                <Button
+                  type="button"
+                  className="bg-gradient-primary font-bold"
+                  onClick={() => {
+                    setAddedOpen(false);
+                    window.dispatchEvent(new CustomEvent("maximus:open-cart"));
+                  }}
+                >
+                  <ShoppingBag className="mr-2 h-4 w-4" /> Avançar para o carrinho
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -189,14 +291,22 @@ export function OptionGroupField({
   onChange: (selections: SelectedOptions) => void;
 }) {
   const selected = selections[group.id] ?? [];
-  const min = group.required ? (group.min ?? 1) : group.min;
+  const min =
+    group.required || group.decisionRequired ? Math.max(group.min ?? 1, 1) : (group.min ?? 0);
+  const max = group.max ?? (group.type === "single" ? 1 : undefined);
+  const ruleText =
+    min > 0 && max === 1
+      ? "Escolha 1 opção"
+      : max
+        ? `Escolha até ${max} itens`
+        : "Escolha quantos quiser";
 
   function setSingle(optionId: string) {
     onChange({ ...selections, [group.id]: [optionId] });
   }
 
   function toggleMultiple(optionId: string, checked: boolean) {
-    if (checked && group.max && selected.length >= group.max) {
+    if (checked && max && selected.length >= max) {
       return;
     }
     const next = checked ? [...selected, optionId] : selected.filter((id) => id !== optionId);
@@ -204,27 +314,21 @@ export function OptionGroupField({
   }
 
   return (
-    <fieldset className="space-y-3 rounded-xl border border-border bg-secondary/50 p-4">
-      <div className="flex items-start justify-between gap-3">
+    <fieldset className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="flex items-start justify-between gap-3 bg-secondary/70 p-4">
         <div>
           <legend className="text-sm font-bold">{group.title}</legend>
-          {min ? (
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Escolha {min}
-              {group.max ? ` até ${group.max}` : ""} opção.
-            </p>
-          ) : (
-            <p className="mt-0.5 text-xs text-muted-foreground">Opcional</p>
-          )}
+          <p className="mt-0.5 text-xs text-muted-foreground">{min ? ruleText : "Opcional"}</p>
         </div>
-        {group.required && (
-          <span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-primary">
-            Obrigatório
+        <div className="flex items-center gap-2">
+          {(group.required || group.decisionRequired) && <Badge>Obrigatório</Badge>}
+          <span className="rounded-full bg-background px-2 py-1 text-xs font-black">
+            {selected.length}/{max ?? selected.length}
           </span>
-        )}
+        </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="divide-y divide-border">
         {group.options.map((option) => {
           const checked = selected.includes(option.id);
           const id = `${group.id}-${option.id}`;
@@ -235,7 +339,7 @@ export function OptionGroupField({
             <label
               key={option.id}
               htmlFor={id}
-              className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-3 text-sm transition-colors hover:border-primary/70"
+              className="flex cursor-pointer items-center justify-between gap-3 bg-card px-4 py-3 text-sm transition-colors hover:bg-secondary/50"
             >
               <span className="flex items-center gap-3">
                 <input

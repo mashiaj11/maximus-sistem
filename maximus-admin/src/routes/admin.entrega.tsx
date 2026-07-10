@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { CheckCircle2, Plus, Save, Trash2 } from "lucide-react";
-import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
 import type { Order } from "@/admin/data/types";
 import { formatBRL, useAdmin } from "@/admin/store";
@@ -13,11 +12,6 @@ export const Route = createFileRoute("/admin/entrega")({
 
 function normalizeNumber(value: number) {
   return Number.isFinite(value) ? value : 0;
-}
-
-function nonNegativeNumber(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
 }
 
 function uniqueById(orders: Order[]) {
@@ -52,58 +46,45 @@ function EntregaPage() {
   const {
     allOrders,
     couriers,
-    deliveryRules,
+    deliveryZones,
     selectedUnit,
-    updateUnit,
-    addDeliveryRule,
-    updateDeliveryRule,
-    removeDeliveryRule,
-    toggleDeliveryRule,
-    saveDeliveryRules,
+    addDeliveryZone,
+    updateDeliveryZone,
+    removeDeliveryZone,
+    toggleDeliveryZone,
+    saveDeliveryZones,
   } = useAdmin();
   const [saved, setSaved] = useState(false);
-  const [settingsSaved, setSettingsSaved] = useState(false);
   const [expandedDriverId, setExpandedDriverId] = useState<string | null>(null);
-  const [deliverySettings, setDeliverySettings] = useState({
-    minimumOrderValue: selectedUnit?.minimumOrderValue ?? 0,
-    baseDeliveryFee: selectedUnit?.baseDeliveryFee ?? 0,
-    deliveryFeePerKm: selectedUnit?.deliveryFeePerKm ?? 0,
-    maxDeliveryDistanceKm: selectedUnit?.maxDeliveryDistanceKm ?? 0,
-    freeDeliveryFrom: selectedUnit?.freeDeliveryFrom ?? 0,
-  });
 
-  useEffect(() => {
-    setDeliverySettings({
-      minimumOrderValue: selectedUnit?.minimumOrderValue ?? 0,
-      baseDeliveryFee: selectedUnit?.baseDeliveryFee ?? 0,
-      deliveryFeePerKm: selectedUnit?.deliveryFeePerKm ?? 0,
-      maxDeliveryDistanceKm: selectedUnit?.maxDeliveryDistanceKm ?? 0,
-      freeDeliveryFrom: selectedUnit?.freeDeliveryFrom ?? 0,
-    });
-  }, [selectedUnit]);
-
-  const duplicateDistances = useMemo(() => {
-    const counts = new Map<number, number>();
-    for (const rule of deliveryRules) {
-      const key = Number(rule.maxDistanceKm.toFixed(2));
+  const duplicateZones = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const zone of deliveryZones) {
+      const key = zone.name.trim().toLowerCase();
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return new Set(
-      [...counts.entries()].filter(([, count]) => count > 1).map(([distance]) => distance),
+      [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name),
     );
-  }, [deliveryRules]);
+  }, [deliveryZones]);
 
   const errors = useMemo(() => {
     const result: string[] = [];
-    for (const rule of deliveryRules) {
-      if (rule.maxDistanceKm <= 0) result.push("Distância deve ser maior que zero.");
-      if (rule.estimatedMinutes <= 0) result.push("Tempo estimado deve ser maior que zero.");
-      if (rule.deliveryFee < 0) result.push("Taxa deve ser maior ou igual a zero.");
+    for (const zone of deliveryZones) {
+      if (!zone.name.trim()) result.push("Zona/Bairro deve ter nome.");
+      if (zone.fee < 0) result.push("Taxa deve ser maior ou igual a zero.");
+      if ((zone.estimatedTimeMin ?? 0) < 0 || (zone.estimatedTimeMax ?? 0) < 0)
+        result.push("Tempo estimado deve ser maior ou igual a zero.");
+      if (
+        zone.estimatedTimeMin != null &&
+        zone.estimatedTimeMax != null &&
+        zone.estimatedTimeMax < zone.estimatedTimeMin
+      )
+        result.push("Tempo máximo deve ser maior ou igual ao mínimo.");
     }
-    if (duplicateDistances.size > 0)
-      result.push("Não é permitido ter faixas com a mesma distância.");
+    if (duplicateZones.size > 0) result.push("Não é permitido ter zonas com o mesmo nome.");
     return [...new Set(result)];
-  }, [deliveryRules, duplicateDistances]);
+  }, [deliveryZones, duplicateZones]);
 
   const canSave = errors.length === 0;
   const driverSummaries = useMemo(() => {
@@ -132,118 +113,47 @@ function EntregaPage() {
 
   function handleSave() {
     if (!canSave) return;
-    saveDeliveryRules();
+    saveDeliveryZones();
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
   }
 
-  async function handleSaveDeliverySettings() {
-    try {
-      await updateUnit(deliverySettings);
-      setSettingsSaved(true);
-      toast.success("Configurações de entrega salvas.");
-      window.setTimeout(() => setSettingsSaved(false), 1800);
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível salvar configurações de entrega.",
-      );
-    }
-  }
-
   return (
-    <div>
+    <div className="pb-20">
       <PageHeader
         title="Entrega"
-        subtitle={`Taxa e tempo por distância · ${selectedUnit?.name ?? "Unidade"}`}
+        subtitle={selectedUnit?.name ?? "Unidade"}
         action={
           <button
-            onClick={addDeliveryRule}
+            onClick={addDeliveryZone}
             className="inline-flex h-10 items-center gap-2 rounded-lg bg-secondary px-4 text-sm font-extrabold hover:bg-accent"
           >
             <Plus className="h-4 w-4" />
-            Nova faixa
+            Nova região
           </button>
         }
       />
 
-      <section className="mb-5 rounded-xl border border-border bg-card p-4">
+      <section className="mb-4 rounded-lg border border-border bg-card p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-extrabold">Configurações de entrega</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Pedido mínimo e valores padrão salvos por unidade.
+            <h2 className="text-base font-extrabold">Regra de cálculo</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Taxa fixa por região do checkout.
             </p>
           </div>
-          <button
-            onClick={handleSaveDeliverySettings}
-            className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-extrabold text-primary-foreground"
-          >
-            {settingsSaved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-            {settingsSaved ? "Salvo" : "Salvar configurações"}
-          </button>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <DeliverySettingField
-            label="Pedido mínimo"
-            value={deliverySettings.minimumOrderValue}
-            step="0.01"
-            onChange={(value) =>
-              setDeliverySettings((current) => ({ ...current, minimumOrderValue: value }))
-            }
-          />
-          <DeliverySettingField
-            label="Taxa base"
-            value={deliverySettings.baseDeliveryFee}
-            step="0.01"
-            onChange={(value) =>
-              setDeliverySettings((current) => ({ ...current, baseDeliveryFee: value }))
-            }
-          />
-          <DeliverySettingField
-            label="Taxa por km"
-            value={deliverySettings.deliveryFeePerKm}
-            step="0.01"
-            onChange={(value) =>
-              setDeliverySettings((current) => ({ ...current, deliveryFeePerKm: value }))
-            }
-          />
-          <DeliverySettingField
-            label="Distância máxima km"
-            value={deliverySettings.maxDeliveryDistanceKm}
-            step="0.1"
-            onChange={(value) =>
-              setDeliverySettings((current) => ({ ...current, maxDeliveryDistanceKm: value }))
-            }
-          />
-          <DeliverySettingField
-            label="Frete grátis a partir de"
-            value={deliverySettings.freeDeliveryFrom}
-            step="0.01"
-            onChange={(value) =>
-              setDeliverySettings((current) => ({ ...current, freeDeliveryFrom: value }))
-            }
-          />
+          <span className="rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">
+            Zonas fixas
+          </span>
         </div>
       </section>
 
-      <div className="mb-5 rounded-xl border border-border bg-card p-4">
+      <div className="mb-4 rounded-lg border border-border bg-card p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-extrabold">Faixas de entrega</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Ordenadas automaticamente por distância crescente.
-            </p>
+            <h2 className="text-base font-extrabold">Regiões</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Zonas ativas aparecem no checkout.</p>
           </div>
-          <button
-            onClick={handleSave}
-            disabled={!canSave}
-            className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-extrabold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-            {saved ? "Salvo" : "Salvar alterações"}
-          </button>
         </div>
 
         {errors.length > 0 && (
@@ -255,14 +165,14 @@ function EntregaPage() {
         )}
       </div>
 
-      <section className="mb-6 rounded-xl border border-border bg-card p-4">
-        <h2 className="text-lg font-extrabold">Resumo do dia por entregador</h2>
-        <div className="mt-4 space-y-3">
+      <section className="mb-4 rounded-lg border border-border bg-card p-3">
+        <h2 className="text-base font-extrabold">Resumo por entregador</h2>
+        <div className="mt-3 space-y-2">
           {driverSummaries.length ? (
             driverSummaries.map((summary) => (
               <div
                 key={summary.courier.id}
-                className={`rounded-lg border bg-background p-3 ${getDriverColor(summary.courier.id).border}`}
+                className={`rounded-md border bg-background p-2.5 ${getDriverColor(summary.courier.id).border}`}
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -310,10 +220,11 @@ function EntregaPage() {
                             {order.customerName} · {order.address ?? "Sem endereço textual"}
                           </p>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            Distância:{" "}
-                            {order.deliveryDistanceKm != null
-                              ? `${order.deliveryDistanceKm.toFixed(1)} km`
-                              : "não registrada"}{" "}
+                            Região: {order.deliveryZoneName ?? "não registrada"}{" "}
+                            · Tempo:{" "}
+                            {order.deliveryEstimatedTime != null
+                              ? `${order.deliveryEstimatedTime} min`
+                              : "não registrado"}{" "}
                             · Taxa:{" "}
                             {formatBRL(
                               order.deliveryFeeSnapshot ??
@@ -373,97 +284,101 @@ function EntregaPage() {
         </div>
       </section>
 
-      <div className="overflow-hidden rounded-xl border border-border">
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-card text-muted-foreground">
             <tr className="text-left">
-              <th className="px-4 py-3 font-medium">Distância máxima</th>
-              <th className="px-4 py-3 font-medium">Tempo estimado</th>
+              <th className="px-4 py-3 font-medium">Zona/Bairro</th>
               <th className="px-4 py-3 font-medium">Taxa</th>
+              <th className="px-4 py-3 font-medium">Tempo estimado</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Resumo</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody>
-            {deliveryRules.map((rule) => {
-              const duplicate = duplicateDistances.has(Number(rule.maxDistanceKm.toFixed(2)));
+            {deliveryZones.map((zone) => {
+              const duplicate = duplicateZones.has(zone.name.trim().toLowerCase());
               return (
-                <tr key={rule.id} className="border-t border-border bg-background">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">Até</span>
-                      <input
-                        type="number"
-                        min="0.1"
-                        step="0.1"
-                        value={rule.maxDistanceKm}
-                        onChange={(event) =>
-                          updateDeliveryRule(rule.id, {
-                            maxDistanceKm: normalizeNumber(Number(event.target.value)),
-                          })
-                        }
-                        className={`h-10 w-24 rounded-lg border bg-background px-3 text-sm ${
-                          duplicate || rule.maxDistanceKm <= 0
-                            ? "border-red-500/60"
-                            : "border-input"
-                        }`}
-                      />
-                      <span className="font-semibold">km</span>
-                    </div>
-                  </td>
+                <tr key={zone.id} className="border-t border-border bg-background">
                   <td className="px-4 py-3">
                     <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={rule.estimatedMinutes}
+                      value={zone.name}
                       onChange={(event) =>
-                        updateDeliveryRule(rule.id, {
-                          estimatedMinutes: normalizeNumber(Number(event.target.value)),
-                        })
+                        updateDeliveryZone(zone.id, { name: event.target.value })
                       }
-                      className={`h-10 w-28 rounded-lg border bg-background px-3 text-sm ${
-                        rule.estimatedMinutes <= 0 ? "border-red-500/60" : "border-input"
+                      className={`h-10 w-44 rounded-lg border bg-background px-3 text-sm ${
+                        duplicate || !zone.name.trim() ? "border-red-500/60" : "border-input"
                       }`}
                     />
-                    <span className="ml-2 font-semibold">min</span>
                   </td>
                   <td className="px-4 py-3">
                     <input
                       type="number"
                       min="0"
                       step="0.5"
-                      value={rule.deliveryFee}
+                      value={zone.fee}
                       onChange={(event) =>
-                        updateDeliveryRule(rule.id, {
-                          deliveryFee: normalizeNumber(Number(event.target.value)),
+                        updateDeliveryZone(zone.id, {
+                          fee: normalizeNumber(Number(event.target.value)),
                         })
                       }
                       className={`h-10 w-28 rounded-lg border bg-background px-3 text-sm ${
-                        rule.deliveryFee < 0 ? "border-red-500/60" : "border-input"
+                        zone.fee < 0 ? "border-red-500/60" : "border-input"
                       }`}
                     />
                   </td>
                   <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={zone.estimatedTimeMin ?? 0}
+                        onChange={(event) =>
+                          updateDeliveryZone(zone.id, {
+                            estimatedTimeMin: normalizeNumber(Number(event.target.value)),
+                          })
+                        }
+                        className="h-10 w-20 rounded-lg border border-input bg-background px-3 text-sm"
+                      />
+                      <span className="text-muted-foreground">a</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={zone.estimatedTimeMax ?? 0}
+                        onChange={(event) =>
+                          updateDeliveryZone(zone.id, {
+                            estimatedTimeMax: normalizeNumber(Number(event.target.value)),
+                          })
+                        }
+                        className="h-10 w-20 rounded-lg border border-input bg-background px-3 text-sm"
+                      />
+                      <span className="font-semibold">min</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
                     <button
-                      onClick={() => toggleDeliveryRule(rule.id)}
+                      onClick={() => toggleDeliveryZone(zone.id)}
                       className={`rounded-full border px-3 py-1.5 text-xs font-bold ${
-                        rule.isActive
+                        zone.isActive
                           ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
                           : "border-border bg-secondary text-muted-foreground"
                       }`}
                     >
-                      {rule.isActive ? "Ativa" : "Inativa"}
+                      {zone.isActive ? "Ativa" : "Inativa"}
                     </button>
                   </td>
                   <td className="px-4 py-3 font-semibold text-muted-foreground">
-                    Até {rule.maxDistanceKm} km · {rule.estimatedMinutes} min ·{" "}
-                    {formatBRL(rule.deliveryFee)}
+                    {zone.name || "Sem nome"} · {formatBRL(zone.fee)} ·{" "}
+                    {zone.estimatedTimeMin || zone.estimatedTimeMax
+                      ? `${zone.estimatedTimeMin ?? zone.estimatedTimeMax}-${zone.estimatedTimeMax ?? zone.estimatedTimeMin} min`
+                      : "sem tempo"}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button
-                      onClick={() => removeDeliveryRule(rule.id)}
+                      onClick={() => removeDeliveryZone(zone.id)}
                       className="inline-flex items-center gap-1 rounded-md bg-secondary px-3 py-1.5 text-xs font-bold hover:bg-accent"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -476,32 +391,25 @@ function EntregaPage() {
           </tbody>
         </table>
       </div>
-    </div>
-  );
-}
 
-function DeliverySettingField({
-  label,
-  value,
-  step,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  step: string;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-sm text-muted-foreground">{label}</span>
-      <input
-        type="number"
-        min="0"
-        step={step}
-        value={value}
-        onChange={(event) => onChange(nonNegativeNumber(event.target.value))}
-        className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-      />
-    </label>
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-[#18191b]/95 px-3 py-3 text-white shadow-none backdrop-blur md:left-56">
+        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-extrabold">Entrega</p>
+            <p className="text-[11px] text-white/60">
+              {errors.length ? "Corrija as regiões antes de salvar." : "Taxas por zona"}
+            </p>
+          </div>
+          <button
+            onClick={handleSave}
+            disabled={!canSave}
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-xs font-extrabold text-primary-foreground disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/45"
+          >
+            {saved ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
+            {saved ? "Salvo" : "Salvar alterações"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -117,7 +117,7 @@ function MesasPage() {
     <div>
       <PageHeader
         title="Mesas"
-        subtitle={`Mesas, links e QR Codes · ${selectedUnit?.name ?? "Unidade"}`}
+        subtitle={selectedUnit?.name ?? "Unidade"}
         action={
           <button
             className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-extrabold text-primary-foreground"
@@ -144,13 +144,12 @@ function MesasPage() {
       />
 
       {!publicAppUrl && (
-        <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+        <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
             <p className="font-extrabold">Configure a URL pública do sistema.</p>
-            <p className="mt-1 text-amber-100/80">
-              Acesse Configurações &gt; Sistema e preencha public_app_url para gerar links completos
-              e QR Codes de mesa.
+            <p className="mt-1 text-xs text-muted-foreground">
+              Preencha a URL pública em Configurações &gt; Sistema.
               {hasDevPublicAppUrlFallback
                 ? " Em desenvolvimento, será usado o endereço local atual como fallback."
                 : ""}
@@ -159,7 +158,7 @@ function MesasPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {sorted.map((table) => {
           const tableUrl = buildTablePublicUrl(
             selectedUnit?.publicAppUrl,
@@ -170,11 +169,11 @@ function MesasPage() {
           return (
             <div
               key={table.id}
-              className={`rounded-xl border border-border bg-card p-5 ${table.active ? "" : "opacity-60"}`}
+              className={`rounded-lg border border-border bg-card p-4 ${table.active ? "" : "opacity-60"}`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-2xl font-black">
+                  <p className="text-xl font-black">
                     Mesa {String(table.number).padStart(2, "0")}
                   </p>
                   <span
@@ -306,8 +305,8 @@ function MesasPage() {
 
       {tableToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="admin-root w-full max-w-md rounded-xl border border-border bg-card p-6 font-sora shadow-xl">
-            <h2 className="text-xl font-black">Apagar mesa</h2>
+          <div className="admin-root w-full max-w-md rounded-lg border border-border bg-card p-5 font-sora">
+            <h2 className="text-lg font-black">Apagar mesa</h2>
             <p className="mt-2 text-sm text-muted-foreground">
               A Mesa {String(tableToDelete.number).padStart(2, "0")} será apagada se nunca foi usada
               em pedidos. Se houver histórico, ela será arquivada e não voltará após atualizar a

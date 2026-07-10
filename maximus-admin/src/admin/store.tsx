@@ -19,11 +19,13 @@ import {
   deleteSupabaseCategory,
   deleteSupabaseCourier,
   deleteSupabaseDeliveryRule,
+  deleteSupabaseDeliveryZone,
   deleteSupabaseProduct,
   deleteSupabaseTable,
   insertSupabaseCategory,
   insertSupabaseCourier,
   insertSupabaseDeliveryRule,
+  insertSupabaseDeliveryZone,
   insertSupabaseProduct,
   insertSupabaseTable,
   loadSupabaseAdminData,
@@ -34,6 +36,7 @@ import {
   updateSupabaseCourier,
   updateSupabaseDriverLocation,
   updateSupabaseDeliveryRule,
+  updateSupabaseDeliveryZone,
   updateSupabaseOrderKitchenPrintStatus,
   updateSupabaseOrderPayment,
   updateSupabaseOrderStatus,
@@ -60,6 +63,7 @@ import type {
   CourierStatus,
   DriverPanelSettings,
   DeliveryRule,
+  DeliveryZone,
   DeliverySettlement,
   DeliverySettlementDriver,
   KitchenPrintSettings,
@@ -99,6 +103,7 @@ interface AdminContextValue {
   couriers: Courier[];
   allCouriers: Courier[];
   deliveryRules: DeliveryRule[];
+  deliveryZones: DeliveryZone[];
   deliverySettlements: DeliverySettlement[];
   reloadData: () => Promise<void>;
   validateDriverLogin: (username: string, pin: string) => Promise<string | null>;
@@ -182,6 +187,19 @@ interface AdminContextValue {
   removeDeliveryRule: (ruleId: string) => void;
   toggleDeliveryRule: (ruleId: string) => void;
   saveDeliveryRules: () => void;
+  addDeliveryZone: () => void;
+  updateDeliveryZone: (
+    zoneId: string,
+    patch: Partial<
+      Pick<
+        DeliveryZone,
+        "name" | "fee" | "estimatedTimeMin" | "estimatedTimeMax" | "isActive" | "sortOrder"
+      >
+    >,
+  ) => void;
+  removeDeliveryZone: (zoneId: string) => void;
+  toggleDeliveryZone: (zoneId: string) => void;
+  saveDeliveryZones: () => void;
   saveDeliverySettlement: (drivers: DeliverySettlementDriver[]) => void;
 }
 
@@ -461,6 +479,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
   const [allTables, setTables] = useState<RestaurantTable[]>([]);
   const [allCouriers, setCouriers] = useState<Courier[]>([]);
   const [allDeliveryRules, setDeliveryRules] = useState<DeliveryRule[]>([]);
+  const [allDeliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
   const [allDeliverySettlements, setDeliverySettlements] = useState<DeliverySettlement[]>([]);
 
   const loadAdminData = useCallback(() => {
@@ -493,6 +512,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         setTables(data.tables.filter((table) => availableUnitIds.has(table.unitId)));
         setCouriers(data.couriers.filter((courier) => availableUnitIds.has(courier.unitId)));
         setDeliveryRules(data.deliveryRules.filter((rule) => availableUnitIds.has(rule.unitId)));
+        setDeliveryZones(data.deliveryZones.filter((zone) => availableUnitIds.has(zone.unitId)));
       })
       .catch((error) => {
         console.error("[Maximus][Supabase] Falha ao carregar dados do admin", error);
@@ -504,6 +524,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         setTables([]);
         setCouriers([]);
         setDeliveryRules([]);
+        setDeliveryZones([]);
         setDataError(
           error instanceof Error ? error.message : "Falha ao carregar dados do Supabase.",
         );
@@ -672,6 +693,11 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           .filter((rule) => rule.unitId === selectedUnitId)
           .sort((a, b) => a.maxDistanceKm - b.maxDistanceKm)
       : [];
+    const deliveryZones = selectedUnitId
+      ? allDeliveryZones
+          .filter((zone) => zone.unitId === selectedUnitId)
+          .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+      : [];
     const triggerKitchenPrint = (order: Order) => {
       const unit = allUnits.find((item) => item.id === order.unitId) ?? null;
       const jobs = buildAutoPrintJobs(order, unit);
@@ -756,6 +782,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       couriers,
       allCouriers,
       deliveryRules,
+      deliveryZones,
       deliverySettlements,
       updateUnit: async (patch) => {
         if (!selectedUnitId) return;
@@ -1519,6 +1546,98 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           return;
         }
       },
+      addDeliveryZone: async () => {
+        if (!selectedUnitId) return;
+        const unitZones = allDeliveryZones.filter((zone) => zone.unitId === selectedUnitId);
+        const zone = {
+          unitId: selectedUnitId,
+          name: `Nova região ${unitZones.length + 1}`,
+          fee: 0,
+          estimatedTimeMin: 50,
+          estimatedTimeMax: 75,
+          isActive: true,
+          sortOrder: unitZones.length,
+        };
+        if (isSupabaseConfigured) {
+          try {
+            const saved = await insertSupabaseDeliveryZone(selectedUnitId, zone);
+            setDeliveryZones((prev) => [...prev, saved]);
+          } catch (error) {
+            console.error("[Maximus][Supabase] Falha ao criar região de entrega", error);
+            setDataError(
+              error instanceof Error
+                ? `Não foi possível salvar a região no Supabase: ${error.message}`
+                : "Não foi possível salvar a região no Supabase.",
+            );
+            setDeliveryZones((prev) => [
+              ...prev,
+              { id: `${selectedUnitId}-zone-${Date.now()}`, ...zone },
+            ]);
+          }
+          return;
+        }
+        setDeliveryZones((prev) => [
+          ...prev,
+          { id: `${selectedUnitId}-zone-${Date.now()}`, ...zone },
+        ]);
+      },
+      updateDeliveryZone: async (zoneId, patch) => {
+        setDeliveryZones((prev) =>
+          prev.map((zone) => (zone.id === zoneId ? { ...zone, ...patch } : zone)),
+        );
+        if (isSupabaseConfigured) {
+          try {
+            await updateSupabaseDeliveryZone(zoneId, patch);
+          } catch (error) {
+            console.error("[Maximus][Supabase] Falha ao atualizar região de entrega", error);
+          }
+        }
+      },
+      removeDeliveryZone: async (zoneId) => {
+        setDeliveryZones((prev) => prev.filter((zone) => zone.id !== zoneId));
+        if (isSupabaseConfigured) {
+          try {
+            await deleteSupabaseDeliveryZone(zoneId);
+          } catch (error) {
+            console.error("[Maximus][Supabase] Falha ao remover região de entrega", error);
+          }
+        }
+      },
+      toggleDeliveryZone: async (zoneId) => {
+        const zone = allDeliveryZones.find((item) => item.id === zoneId);
+        if (!zone) return;
+        const isActive = !zone.isActive;
+        setDeliveryZones((prev) =>
+          prev.map((zone) => (zone.id === zoneId ? { ...zone, isActive } : zone)),
+        );
+        if (isSupabaseConfigured) {
+          try {
+            await updateSupabaseDeliveryZone(zoneId, { isActive });
+          } catch (error) {
+            console.error("[Maximus][Supabase] Falha ao alternar região de entrega", error);
+          }
+        }
+      },
+      saveDeliveryZones: async () => {
+        if (isSupabaseConfigured) {
+          try {
+            await Promise.all(
+              allDeliveryZones.map((zone) =>
+                updateSupabaseDeliveryZone(zone.id, {
+                  name: zone.name,
+                  fee: zone.fee,
+                  estimatedTimeMin: zone.estimatedTimeMin,
+                  estimatedTimeMax: zone.estimatedTimeMax,
+                  isActive: zone.isActive,
+                  sortOrder: zone.sortOrder,
+                }),
+              ),
+            );
+          } catch (error) {
+            console.error("[Maximus][Supabase] Falha ao salvar regiões de entrega", error);
+          }
+        }
+      },
       saveDeliverySettlement: (drivers) => {
         if (!selectedUnitId) return;
         const cleanDrivers = drivers
@@ -1549,6 +1668,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     allCategories,
     allCouriers,
     allDeliveryRules,
+    allDeliveryZones,
     allDeliverySettlements,
     allOrders,
     allProducts,

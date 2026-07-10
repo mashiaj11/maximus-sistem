@@ -1,9 +1,19 @@
 import { useEffect, useId, useMemo, useState, type HTMLAttributes } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Check, Copy, MapPin } from "lucide-react";
+import {
+  Banknote,
+  Check,
+  Copy,
+  CreditCard,
+  LocateFixed,
+  MapPinned,
+  QrCode,
+  Search,
+  Smartphone,
+} from "lucide-react";
 import { toast } from "sonner";
 import { SiteHeader } from "@/components/SiteHeader";
-import { LocationPickerMap } from "@/components/MapView";
+import { GoogleAddressMap } from "@/components/GoogleAddressMap";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,18 +25,25 @@ import type {
   ConsumeMode,
   CustomerAddress,
   CustomerProfile,
+  DeliveryZone,
   OrderInfo,
   OrderTrackMode,
 } from "@/lib/types";
 import { normalizeMesa } from "@/lib/utils";
 import { type GeoUnit } from "@/lib/geo";
+import { getDefaultSelections } from "@/lib/cart-customization";
 import {
-  calculateDeliveryRoute,
   formatManualAddress,
-  reverseGeocodeCoordinates,
+  normalizeNeighborhoodName,
   type GeocodingStatus,
-  type ManualAddressForGeocoding,
 } from "@/lib/geocoding";
+import {
+  geocodeAddress,
+  getCurrentLocation,
+  getGoogleMapsApiKey,
+  reverseGeocodeLatLng,
+  type NormalizedGoogleAddress,
+} from "@/lib/google-maps";
 import {
   deleteAddress,
   findCustomerByPhone,
@@ -40,7 +57,9 @@ import {
 import {
   createOrderInSupabase,
   findPublicTable,
+  loadActivePublicUnit,
   loadDeliveryRules,
+  loadDeliveryZones,
   loadPublicMenu,
   loadPublicTables,
   type PublicTable,
@@ -65,6 +84,10 @@ type DeliveryQuote = {
   method: "gps" | "manual_pin" | "blocked";
   blockedReason?: string;
 };
+
+const DELIVERY_CALCULATION_METHOD = "zone" as const;
+const NO_ZONE_MESSAGE =
+  "Não conseguimos identificar a região de entrega desse endereço. Ajuste o pino no mapa ou tente buscar o endereço novamente.";
 
 interface CheckoutSearch {
   mesa?: string;
@@ -110,9 +133,9 @@ type Step =
   | "location"
   | "addressManual"
   | "payment"
-  | "payDelivery"
   | "payCash"
   | "payCard"
+  | "payPix"
   | "payPixDelivery"
   | "payApp"
   | "balcao"
@@ -125,6 +148,8 @@ const EMPTY_ADDRESS = {
   rua: "",
   numero: "",
   bairro: "",
+  cidade: "Santarém",
+  estado: "PA",
   cep: "",
   complemento: "",
   referencia: "",
@@ -137,72 +162,11 @@ type ResolvedDelivery = {
   unit: GeoUnit | null;
   distanceKm: number | null;
   deliveryRangeId: string | null;
+  estimatedMinutes: number | null;
   locationSource: DeliveryLocationSource;
   geocodingStatus: GeocodingStatus;
   displayAddress?: string;
 };
-
-type DeliveryRouteCandidate = GeoUnit & {
-  distanceKm: number;
-  deliveryLat: number;
-  deliveryLng: number;
-  durationMinutes: number | null;
-  rawAddress: string | null;
-  deliveryFee: number | null;
-  deliveryRangeId: string | null;
-  minimumOrderValueFromFunction: number | null;
-  totalFromFunction: number | null;
-};
-
-async function resolveNearestDeliveryCandidate(
-  units: GeoUnit[],
-  subtotal: number,
-  location: { latitude: number; longitude: number },
-): Promise<DeliveryRouteCandidate | null> {
-  const firstUnit = units[0];
-  if (!firstUnit) return null;
-  const unitsWithRules = await Promise.all(
-    units.map(async (unit) => ({
-      ...unit,
-      deliveryRules: await loadDeliveryRules(unit.id),
-    })),
-  );
-  const calculation = await calculateDeliveryRoute({
-    unitLat: firstUnit.latitude,
-    unitLng: firstUnit.longitude,
-    unitId: firstUnit.id,
-    unitName: firstUnit.name,
-    subtotal,
-    units: unitsWithRules,
-    deliveryLat: location.latitude,
-    deliveryLng: location.longitude,
-  });
-  const selectedUnit =
-    units.find((unit) => unit.id === calculation.unitId) ??
-    units.find((unit) => unit.name === calculation.unitName) ??
-    null;
-  if (!selectedUnit) return null;
-  return {
-    ...selectedUnit,
-    distanceKm: calculation.distanceKm,
-    deliveryLat: calculation.deliveryLat,
-    deliveryLng: calculation.deliveryLng,
-    durationMinutes: calculation.durationMinutes,
-    rawAddress: calculation.rawAddress,
-    deliveryFee: calculation.deliveryFee,
-    deliveryRangeId: calculation.deliveryRangeId,
-    minimumOrderValueFromFunction: calculation.minimumOrderValue,
-    totalFromFunction: calculation.total,
-  };
-}
-
-async function findNearestUnitByRoute(
-  location: { latitude: number; longitude: number },
-  units: GeoUnit[],
-  subtotal: number,
-): Promise<DeliveryRouteCandidate | null> {
-  return resolveNearestDeliveryCandidate(units, subtotal, location);
-}
 
 function normalizeTableNumber(value?: string) {
   return value ? String(Number(value)).padStart(2, "0") : "";
@@ -217,7 +181,7 @@ function CheckoutPage() {
     [mode, searchTable, searchUnit],
   );
   const navigate = useNavigate();
-  const { items, subtotal, count, orderContext, setOrderContext } = useCart();
+  const { items, subtotal, count, orderContext, setOrderContext, addItem, clearItems } = useCart();
   const { placeOrder } = useOrder();
   const isStoredQrContext = orderContext?.source === "qr" || orderContext?.mode === "dine_in";
   const effectiveUnit = isStoredQrContext
@@ -231,7 +195,7 @@ function CheckoutPage() {
     : (mode ?? orderContext?.mode);
   const isQrDineIn = effectiveMode === "dine_in" && Boolean(effectiveTable);
 
-  const [step, setStep] = useState<Step>("mode");
+  const [step, setStep] = useState<Step>("contact");
   const [consumeMode, setConsumeMode] = useState<ConsumeMode | null>(null);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -252,6 +216,12 @@ function CheckoutPage() {
   const [locationConfirmed, setLocationConfirmed] = useState(false);
   const [deliveryUnit, setDeliveryUnit] = useState<GeoUnit | null>(null);
   const [deliveryRules, setDeliveryRules] = useState<DeliveryRuleQuote[]>([]);
+  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
+  const [resolvedDeliveryZoneId, setResolvedDeliveryZoneId] = useState("");
+  const [addressSearch, setAddressSearch] = useState("");
+  const [addressMode, setAddressMode] = useState<"start" | "form">("start");
+  const [addressLookupLoading, setAddressLookupLoading] = useState(false);
+  const [detectedAddress, setDetectedAddress] = useState("");
   const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
   const [deliveryRangeId, setDeliveryRangeId] = useState<string | null>(null);
   const [deliveryLocation, setDeliveryLocation] = useState<{
@@ -261,15 +231,31 @@ function CheckoutPage() {
   const [deliveryLocationSource, setDeliveryLocationSource] =
     useState<DeliveryLocationSource>("manual_unavailable");
   const [deliveryAddressMode, setDeliveryAddressMode] = useState<"gps" | "other" | null>(null);
+  const [showDeliveryMap, setShowDeliveryMap] = useState(false);
   const [pendingDelivery, setPendingDelivery] = useState<ResolvedDelivery | null>(null);
   const [geocodingStatus, setGeocodingStatus] = useState<GeocodingStatus>("not_needed");
   const [locationDenied, setLocationDenied] = useState(false);
-  const [gpsAuthorized, setGpsAuthorized] = useState(false);
+  const [, setGpsAuthorized] = useState(false);
   const [noOpenUnits, setNoOpenUnits] = useState(false);
   const [needChange, setNeedChange] = useState(false);
   const [changeFor, setChangeFor] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [privacyConsent, setPrivacyConsent] = useState(false);
+
+  const requestedActiveUnit = useMemo(() => {
+    if (!effectiveUnit || !units.length) return null;
+    return units.find((item) => item.slug === effectiveUnit || item.id === effectiveUnit) ?? null;
+  }, [effectiveUnit, units]);
+  const activeUnit = useMemo(() => {
+    if (!units.length) return null;
+    return requestedActiveUnit ?? units[0];
+  }, [requestedActiveUnit, units]);
+  const selectedDeliveryZone = useMemo(
+    () => deliveryZones.find((zone) => zone.id === resolvedDeliveryZoneId) ?? null,
+    [deliveryZones, resolvedDeliveryZoneId],
+  );
+  const qrUnitIsActive = !effectiveUnit || units.length === 0 || Boolean(requestedActiveUnit);
+  const activeIsQrDineIn = isQrDineIn && qrUnitIsActive;
 
   useEffect(() => {
     console.log("CHECKOUT QR FLAGS", {
@@ -319,7 +305,7 @@ function CheckoutPage() {
     setTable(normalizeTableNumber(effectiveTable));
     if (consumeMode === "delivery" || consumeMode === "local" || consumeMode === "balcao") {
       setConsumeMode(null);
-      setStep("mode");
+      setStep("contact");
     }
   }, [
     consumeMode,
@@ -362,26 +348,32 @@ function CheckoutPage() {
   }, []);
 
   useEffect(() => {
-    loadPublicMenu(selectedUnitSlug, isQrDineIn ? "dine_in" : "delivery")
+    loadPublicMenu(selectedUnitSlug, activeIsQrDineIn ? "dine_in" : "delivery")
       .then((data) => {
         setUnits(data.units);
-        if (selectedUnitSlug) {
-          const contextUnit =
-            data.units.find(
-              (unit) => unit.slug === selectedUnitSlug || unit.id === selectedUnitSlug,
-            ) ?? null;
-          setDeliveryUnit(contextUnit);
-        }
+        const contextUnit =
+          (selectedUnitSlug
+            ? data.units.find(
+                (unit) => unit.slug === selectedUnitSlug || unit.id === selectedUnitSlug,
+              )
+            : null) ??
+          data.units[0] ??
+          null;
+        setDeliveryUnit(contextUnit);
       })
       .catch(() => undefined);
-    if (selectedUnitSlug) {
-      loadPublicTables(selectedUnitSlug)
-        .then(setUnitTables)
-        .catch(() => setUnitTables([]));
-    } else {
+  }, [activeIsQrDineIn, selectedUnitSlug]);
+
+  useEffect(() => {
+    const unitForTables = activeUnit?.slug ?? activeUnit?.id;
+    if (!unitForTables) {
       setUnitTables([]);
+      return;
     }
-  }, [isQrDineIn, selectedUnitSlug]);
+    loadPublicTables(unitForTables)
+      .then(setUnitTables)
+      .catch(() => setUnitTables([]));
+  }, [activeUnit?.id, activeUnit?.slug]);
 
   useEffect(() => {
     if (!deliveryUnit?.id) {
@@ -392,6 +384,26 @@ function CheckoutPage() {
       .then(setDeliveryRules)
       .catch(() => setDeliveryRules([]));
   }, [deliveryUnit?.id]);
+
+  useEffect(() => {
+    const unitId = activeUnit?.id ?? deliveryUnit?.id;
+    if (!unitId) {
+      setDeliveryZones([]);
+      setResolvedDeliveryZoneId("");
+      return;
+    }
+    loadDeliveryZones(unitId)
+      .then((zones) => {
+        setDeliveryZones(zones);
+        setResolvedDeliveryZoneId((current) =>
+          current && zones.some((zone) => zone.id === current) ? current : "",
+        );
+      })
+      .catch(() => {
+        setDeliveryZones([]);
+        setResolvedDeliveryZoneId("");
+      });
+  }, [activeUnit?.id, deliveryUnit?.id]);
 
   useEffect(() => {
     const digits = phone.replace(/\D/g, "");
@@ -417,9 +429,23 @@ function CheckoutPage() {
     return () => window.clearTimeout(timeout);
   }, [currentCustomer?.phone, phone]);
 
+  useEffect(() => {
+    if (resolvedDeliveryZoneId || !deliveryZones.length) return;
+    const zone = matchDeliveryZone(address.bairro, address.rua, address.cidade, detectedAddress);
+    if (zone) setResolvedDeliveryZoneId(zone.id);
+  }, [
+    address.bairro,
+    address.cidade,
+    address.rua,
+    deliveryZones,
+    detectedAddress,
+    resolvedDeliveryZoneId,
+  ]);
+
   const isAddressComplete =
-    Boolean(address.rua.trim()) && Boolean(address.numero.trim()) && Boolean(address.bairro.trim());
+    Boolean(address.rua.trim()) && Boolean(address.numero.trim()) && Boolean(selectedDeliveryZone);
   const allUnitsClosed = units.length > 0 && units.every((unit) => !unit.isOpen);
+  const googleMapsEnabled = Boolean(getGoogleMapsApiKey());
 
   if (items.length === 0) {
     return (
@@ -427,7 +453,7 @@ function CheckoutPage() {
         <SiteHeader
           mesa={effectiveTable}
           unidade={effectiveUnit}
-          mode={isQrDineIn ? "dine_in" : undefined}
+          mode={activeIsQrDineIn ? "dine_in" : undefined}
         />
         <CheckoutShell title="Meu pedido está vazio">
           <Button
@@ -438,7 +464,7 @@ function CheckoutPage() {
                 search: {
                   ...(effectiveUnit ? { unidade: effectiveUnit } : {}),
                   ...(effectiveTable ? { mesa: effectiveTable } : {}),
-                  ...(isQrDineIn ? { mode: "dine_in" } : {}),
+                  ...(activeIsQrDineIn ? { mode: "dine_in" } : {}),
                 },
               })
             }
@@ -456,7 +482,7 @@ function CheckoutPage() {
         <SiteHeader
           mesa={effectiveTable}
           unidade={effectiveUnit}
-          mode={isQrDineIn ? "dine_in" : undefined}
+          mode={activeIsQrDineIn ? "dine_in" : undefined}
         />
         <CheckoutShell title="Estamos fechados agora">
           <div className="space-y-4">
@@ -496,17 +522,24 @@ function CheckoutPage() {
 
   function currentAddressDraft(
     location = deliveryLocation,
+    zone = selectedDeliveryZone,
   ): Omit<CustomerAddress, "id" | "createdAt" | "updatedAt"> {
     return {
       label: address.label,
       street: address.rua.trim(),
       number: address.numero.trim(),
       neighborhood: address.bairro.trim(),
+      city: address.cidade.trim() || "Santarém",
+      state: address.estado.trim() || "PA",
+      postalCode: address.cep.trim() || undefined,
       complement: address.complemento.trim() || undefined,
       reference: address.referencia.trim() || undefined,
       isDefault: saveAsDefault,
       latitude: location?.latitude,
       longitude: location?.longitude,
+      deliveryZoneId: zone?.id,
+      deliveryZoneName: zone?.name,
+      deliveryFeeSnapshot: zone?.fee,
     };
   }
 
@@ -516,29 +549,37 @@ function CheckoutPage() {
       rua: saved.street,
       numero: saved.number,
       bairro: saved.neighborhood,
-      cep: "",
+      cidade: saved.city ?? "Santarém",
+      estado: saved.state ?? "PA",
+      cep: saved.postalCode ?? "",
       complemento: saved.complement ?? "",
       referencia: saved.reference ?? "",
     });
+    setResolvedDeliveryZoneId(saved.deliveryZoneId ?? "");
     setSaveAsDefault(saved.isDefault);
   }
 
   function applySavedAddressLocation(saved: CustomerAddress) {
-    if (saved.latitude == null || saved.longitude == null) return;
     setDeliveryAddressMode("other");
-    applyDeliveryLocation({ latitude: saved.latitude, longitude: saved.longitude }, "manual_pin");
+    if (saved.deliveryZoneId) setResolvedDeliveryZoneId(saved.deliveryZoneId);
+    if (saved.latitude == null || saved.longitude == null) return;
+    setDeliveryLocation({ latitude: saved.latitude, longitude: saved.longitude });
   }
 
-  async function saveCurrentAddress(customerId: string, location = deliveryLocation) {
+  async function saveCurrentAddress(
+    customerId: string,
+    location = deliveryLocation,
+    zone = selectedDeliveryZone,
+  ) {
     const saved = await saveAddress(customerId, {
-      ...currentAddressDraft(location),
-      id: editingAddressId ?? undefined,
+      ...currentAddressDraft(location, zone),
+      id: (editingAddressId ?? selectedAddressId) || undefined,
       latitude: location?.latitude,
       longitude: location?.longitude,
     });
     setCurrentCustomer(saved);
-    const latest =
-      saved.addresses.find((item) => item.id === editingAddressId) ?? saved.addresses.at(-1);
+    const savedAddressId = editingAddressId ?? selectedAddressId;
+    const latest = saved.addresses.find((item) => item.id === savedAddressId) ?? saved.addresses.at(-1);
     if (latest) {
       setSelectedAddressId(latest.id);
       setEditingAddressId(null);
@@ -550,6 +591,122 @@ function CheckoutPage() {
       });
     }
     return latest;
+  }
+
+  function matchDeliveryZone(...values: Array<string | undefined | null>) {
+    const candidates = values
+      .flatMap((value) => (value ?? "").split(/[,\-·]/))
+      .map(normalizeNeighborhoodName)
+      .filter(Boolean);
+    if (!candidates.length) return null;
+    return (
+      deliveryZones.find((zone) =>
+        candidates.some((candidate) => normalizeNeighborhoodName(zone.name) === candidate),
+      ) ??
+      deliveryZones.find((zone) =>
+        candidates.some((candidate) => normalizeNeighborhoodName(zone.name).includes(candidate)),
+      ) ??
+      deliveryZones.find((zone) =>
+        candidates.some((candidate) => candidate.includes(normalizeNeighborhoodName(zone.name))),
+      ) ??
+      null
+    );
+  }
+
+  function resolveZoneFromCurrentAddress() {
+    return matchDeliveryZone(
+      address.bairro,
+      address.rua,
+      address.cidade,
+      detectedAddress,
+      addressSearch,
+    );
+  }
+
+  function applyGoogleAddress(result: NormalizedGoogleAddress | null) {
+    if (!result) {
+      toast.error("Endereço não encontrado. Você pode preencher manualmente.");
+      setAddressMode("form");
+      return;
+    }
+    setDetectedAddress(result.formattedAddress);
+    setAddress((current) => ({
+      ...current,
+      rua: result.street || current.rua,
+      numero: result.number || current.numero,
+      bairro: result.neighborhood || current.bairro,
+      cidade: result.city || current.cidade || "Santarém",
+      estado: result.state || current.estado || "PA",
+      cep: result.postalCode || current.cep,
+    }));
+    const zone = matchDeliveryZone(
+      result.neighborhood,
+      ...result.areaCandidates,
+      result.formattedAddress,
+      result.city,
+      result.state,
+    );
+    setResolvedDeliveryZoneId(zone?.id ?? "");
+    setDeliveryLocation({ latitude: result.latitude, longitude: result.longitude });
+    setDeliveryLocationSource("manual_pin");
+    setGeocodingStatus("geocoded");
+    setLocationConfirmed(true);
+    setLocationDenied(false);
+    setAddressMode("form");
+  }
+
+  async function searchGoogleAddress() {
+    if (!addressSearch.trim()) {
+      toast.error("Digite um endereço ou CEP para buscar.");
+      return;
+    }
+    setAddressLookupLoading(true);
+    try {
+      applyGoogleAddress(await geocodeAddress(addressSearch));
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível buscar o endereço. Preencha manualmente.",
+      );
+      setAddressMode("form");
+    } finally {
+      setAddressLookupLoading(false);
+    }
+  }
+
+  async function useBrowserLocation() {
+    setAddressLookupLoading(true);
+    try {
+      const location = await getCurrentLocation();
+      const result = await reverseGeocodeLatLng(location.latitude, location.longitude);
+      applyGoogleAddress(
+        result ?? {
+          formattedAddress: "",
+          street: "",
+          number: "",
+          neighborhood: "",
+          areaCandidates: [],
+          city: "Santarém",
+          state: "PA",
+          postalCode: "",
+          latitude: location.latitude,
+          longitude: location.longitude,
+        },
+      );
+      setDeliveryLocationSource("gps");
+      setGeocodingStatus("gps_confirmed");
+    } catch (error) {
+      setLocationDenied(true);
+      setAddressMode("form");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Não conseguimos acessar sua localização. Você pode buscar pelo endereço ou preencher manualmente.",
+      );
+    } finally {
+      setAddressLookupLoading(false);
+    }
   }
 
   async function finalize(
@@ -565,7 +722,7 @@ function CheckoutPage() {
       toast.error("Todas as unidades estão fechadas no momento.");
       return;
     }
-    if (isQrDineIn && mode === "delivery") {
+    if (activeIsQrDineIn && mode === "delivery") {
       toast.error("Delivery não está disponível para pedidos iniciados por QR de mesa.");
       setConsumeMode(null);
       setStep("mode");
@@ -574,30 +731,25 @@ function CheckoutPage() {
     setSubmitting(true);
     let resolvedDelivery: ResolvedDelivery | null = null;
     if (mode === "delivery") {
-      resolvedDelivery =
-        pendingDelivery ??
-        (deliveryAddressMode === "gps" && deliveryLocation
-          ? {
-              location: deliveryLocation,
-              unit: deliveryUnit,
-              distanceKm: deliveryDistanceKm,
-              deliveryRangeId,
-              locationSource: "gps",
-              geocodingStatus,
-            }
-          : await resolveManualAddressLocation());
-      if (!resolvedDelivery?.location) {
-        toast.error("Confirme o local da entrega pelo GPS ou marque no mapa.");
+      if (!isAddressComplete) {
+        toast.error(!selectedDeliveryZone ? NO_ZONE_MESSAGE : "Preencha rua e número para entrega.");
         setSubmitting(false);
         return;
       }
+      resolvedDelivery = {
+        location: deliveryLocation,
+        unit: activeUnit ?? deliveryUnit,
+        distanceKm: null,
+        deliveryRangeId: null,
+        estimatedMinutes: deliveryQuote.estimatedMinutes,
+        locationSource: "manual_unavailable",
+        geocodingStatus: "not_needed",
+      };
     }
     const unit =
       mode === "delivery"
-        ? resolvedDelivery?.unit
-        : selectedUnitSlug
-          ? units.find((item) => item.slug === selectedUnitSlug || item.id === selectedUnitSlug)
-          : null;
+        ? (resolvedDelivery?.unit ?? activeUnit ?? (await loadActivePublicUnit(selectedUnitSlug)))
+        : (activeUnit ?? (await loadActivePublicUnit(selectedUnitSlug)));
     const customer = await persistCustomer();
     let usedAddress: CustomerAddress | undefined;
     let tableId: string | null = null;
@@ -607,7 +759,11 @@ function CheckoutPage() {
           ? currentCustomer?.addresses.find((item) => item.id === selectedAddressId)
           : undefined;
         if (!usedAddress) {
-          usedAddress = await saveCurrentAddress(customer.id, resolvedDelivery?.location ?? null);
+          usedAddress = await saveCurrentAddress(
+            customer.id,
+            resolvedDelivery?.location ?? null,
+            selectedDeliveryZone,
+          );
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Não foi possível salvar o endereço.");
@@ -625,7 +781,7 @@ function CheckoutPage() {
       }
     }
     if (!unit) {
-      toast.error("Não foi possível identificar a unidade do pedido.");
+      toast.error("Não conseguimos carregar a loja agora. Atualize a página e tente novamente.");
       setSubmitting(false);
       return;
     }
@@ -636,14 +792,15 @@ function CheckoutPage() {
     }
     const quote =
       mode === "delivery"
-        ? calculateDeliveryQuote({
-            subtotal,
-            unit,
-            distanceKm: resolvedDelivery?.distanceKm ?? null,
-            rules: await loadRulesForResolvedUnit(unit),
-            neighborhood: usedAddress?.neighborhood ?? address.bairro,
-            locationSource: resolvedDelivery?.locationSource ?? deliveryLocationSource,
-          })
+          ? calculateDeliveryQuote({
+              subtotal,
+              unit,
+              distanceKm: resolvedDelivery?.distanceKm ?? null,
+              rules: await loadRulesForResolvedUnit(unit),
+              deliveryZone: selectedDeliveryZone,
+              neighborhood: usedAddress?.neighborhood ?? address.bairro,
+              locationSource: resolvedDelivery?.locationSource ?? deliveryLocationSource,
+            })
         : null;
     const minimumOrderValue = quote?.minimumOrderValue ?? 0;
     if (mode === "delivery" && subtotal < minimumOrderValue) {
@@ -672,10 +829,9 @@ function CheckoutPage() {
         latitudeCliente: resolvedDelivery?.location?.latitude,
         longitudeCliente: resolvedDelivery?.location?.longitude,
         unidadeAtribuida: deliveryQuoteUnitLabel(unit),
-        distanciaCalculadaKm: resolvedDelivery?.distanceKm,
+        zonaEntrega: selectedDeliveryZone?.name,
         taxaCalculada: deliveryFee,
         metodo: quote?.method,
-        geocodingStatus: resolvedDelivery?.geocodingStatus,
       });
     }
 
@@ -702,9 +858,16 @@ function CheckoutPage() {
       unitName: unit?.name,
       unitLat: unit?.latitude,
       unitLng: unit?.longitude,
-      deliveryDistanceKm: resolvedDelivery?.distanceKm ?? null,
+      deliveryDistanceKm: null,
       deliveryFee,
-      deliveryRangeId: resolvedDelivery?.deliveryRangeId ?? quote?.deliveryRangeId ?? null,
+      deliveryRangeId: null,
+      deliveryZoneId: selectedDeliveryZone?.id ?? null,
+      deliveryZoneName: selectedDeliveryZone?.name ?? null,
+      deliveryEstimatedTime:
+        mode === "delivery"
+          ? (resolvedDelivery?.estimatedMinutes ?? quote?.estimatedMinutes ?? null)
+          : null,
+      deliveryCalculationMethod: mode === "delivery" ? DELIVERY_CALCULATION_METHOD : null,
       minimumOrderValue,
       deliveryLat: resolvedDelivery?.location?.latitude,
       deliveryLng: resolvedDelivery?.location?.longitude,
@@ -731,8 +894,8 @@ function CheckoutPage() {
         unitId: unit.id,
         tableId,
         deliveryFee,
-        deliveryDistanceKm: resolvedDelivery?.distanceKm ?? null,
-        deliveryRangeId: resolvedDelivery?.deliveryRangeId ?? quote?.deliveryRangeId ?? null,
+        deliveryDistanceKm: null,
+        deliveryRangeId: null,
       });
       const order: OrderInfo = {
         ...draft,
@@ -780,58 +943,34 @@ function CheckoutPage() {
         };
         console.info("[Maximus][checkout][gps] coords capturadas", location);
         setGpsAuthorized(true);
-        let nearest: DeliveryRouteCandidate | null = null;
+        let resolved: ResolvedDelivery | null = null;
         try {
-          nearest = await applyDeliveryLocation(location, "gps");
+          resolved = await applyDeliveryLocation(location, "gps");
         } catch (error) {
           setLocating(false);
           toast.error(error instanceof Error ? error.message : "Não foi possível calcular a rota.");
           return;
         }
-        let reverseResult: Awaited<ReturnType<typeof reverseGeocodeCoordinates>> = null;
-        try {
-          reverseResult = await reverseGeocodeCoordinates(location.latitude, location.longitude);
-        } catch (error) {
-          console.warn("[Maximus][Nominatim][reverse] falha", error);
-        }
-
-        if (reverseResult) {
-          setAddress((current) => ({
-            ...current,
-            rua: reverseResult.street || current.rua,
-            numero: reverseResult.number || current.numero,
-            bairro: reverseResult.neighborhood || current.bairro,
-            referencia: reverseResult.displayName || current.referencia,
-          }));
-        }
-
-        const hasMainFields = Boolean(
-          reverseResult?.street && reverseResult.neighborhood && reverseResult.number,
-        );
         setLocating(false);
-        if (hasMainFields) {
-          toast.success("Localização confirmada.");
+        if (resolved?.distanceKm != null && resolved.deliveryRangeId) {
+          toast.success("Entrega calculada. Complete o endereço.");
         } else {
-          toast.info("Localização encontrada. Complete o endereço manualmente.");
+          toast.info("Localização capturada. Complete o endereço manualmente.");
         }
-        const gpsRules = nearest ? await loadRulesForResolvedUnit(nearest) : [];
+        const gpsRules = resolved?.unit ? await loadRulesForResolvedUnit(resolved.unit) : [];
         const gpsQuote = calculateDeliveryQuote({
           subtotal,
-          unit: nearest,
-          distanceKm: nearest?.distanceKm ?? null,
+          unit: resolved?.unit ?? null,
+          distanceKm: resolved?.distanceKm ?? null,
           rules: gpsRules,
-          neighborhood: reverseResult?.neighborhood ?? address.bairro,
+          neighborhood: address.bairro,
           locationSource: "gps",
         });
         console.info("[Maximus][checkout][gps] validação", {
           coords: location,
-          address: reverseResult,
-          ruaExtraida: reverseResult?.street,
-          numeroExtraido: reverseResult?.number,
-          bairroExtraido: reverseResult?.neighborhood,
-          unidadeEscolhida: deliveryQuoteUnitLabel(nearest),
+          unidadeEscolhida: deliveryQuoteUnitLabel(resolved?.unit ?? null),
           taxaCalculada: gpsQuote.fee,
-          motivoSemUnidade: nearest ? null : "nenhuma unidade aberta para as coordenadas",
+          motivoBloqueio: gpsQuote.blockedReason,
         });
         setStep("addressManual");
       },
@@ -848,59 +987,45 @@ function CheckoutPage() {
     location: { latitude: number; longitude: number },
     source: DeliveryLocationSource,
   ) {
-    const nearest =
-      (await findNearestUnitByRoute(
-        location,
-        units.filter((unit) => unit.isOpen),
-        subtotal,
-      )) ?? (await findNearestUnitByRoute(location, units, subtotal));
-    if (!nearest) {
-      setDeliveryLocation(location);
-      setDeliveryLocationSource(source);
-      setGeocodingStatus(source === "gps" ? "gps_confirmed" : "not_needed");
-      setDeliveryUnit(null);
-      setDeliveryDistanceKm(null);
-      setDeliveryRangeId(null);
-      setLocationConfirmed(true);
-      setLocationDenied(false);
-      setNoOpenUnits(false);
-      return null;
-    }
+    const unit = resolveActiveDeliveryUnit() ?? (await loadActivePublicUnit(selectedUnitSlug));
     setDeliveryLocation({
-      latitude: nearest.deliveryLat,
-      longitude: nearest.deliveryLng,
+      latitude: location.latitude,
+      longitude: location.longitude,
     });
     setDeliveryLocationSource(source);
     setGeocodingStatus(source === "gps" ? "gps_confirmed" : "not_needed");
-    setDeliveryUnit(nearest);
-    setDeliveryDistanceKm(nearest.distanceKm);
-    setDeliveryRangeId(nearest.deliveryRangeId);
+    setDeliveryUnit(unit);
+    setDeliveryDistanceKm(null);
+    setDeliveryRangeId(null);
     setLocationConfirmed(true);
     setLocationDenied(false);
     setNoOpenUnits(false);
-    return nearest;
+    const resolved: ResolvedDelivery = {
+      location,
+      unit,
+      distanceKm: null,
+      deliveryRangeId: null,
+      estimatedMinutes: deliveryQuote.estimatedMinutes,
+      locationSource: source,
+      geocodingStatus: source === "gps" ? "gps_confirmed" : "not_needed",
+    };
+    setPendingDelivery(null);
+    return resolved;
   }
 
   async function resolveManualAddressLocation() {
     try {
       setPendingDelivery(null);
-      const manualAddress = {
-        street: address.rua.trim(),
-        number: address.numero.trim(),
-        neighborhood: address.bairro.trim(),
-        city: "Santarém",
-        state: "Pará",
-        postalCode: address.cep.trim() || undefined,
-      } satisfies ManualAddressForGeocoding;
-
       if (!deliveryLocation) {
+        const unit = resolveActiveDeliveryUnit() ?? (await loadActivePublicUnit(selectedUnitSlug));
         setDeliveryLocationSource("manual_unavailable");
         setGeocodingStatus("not_needed");
         return {
           location: null,
-          unit: null,
+          unit,
           distanceKm: null,
           deliveryRangeId: null,
+          estimatedMinutes: null,
           locationSource: "manual_unavailable" as const,
           geocodingStatus: "not_needed" as GeocodingStatus,
         };
@@ -911,21 +1036,23 @@ function CheckoutPage() {
         deliveryLocationSource === "gps" ? "gps" : "manual_pin",
       );
       if (!nearest) {
+        const unit = resolveActiveDeliveryUnit() ?? (await loadActivePublicUnit(selectedUnitSlug));
         return {
           location: deliveryLocation,
-          unit: null,
+          unit,
           distanceKm: null,
           deliveryRangeId: null,
+          estimatedMinutes: null,
           locationSource: deliveryLocationSource === "gps" ? "gps" : ("manual_pin" as const),
           geocodingStatus:
             deliveryLocationSource === "gps" ? "gps_confirmed" : ("not_needed" as GeocodingStatus),
         };
       }
 
-      const location = { latitude: nearest.deliveryLat, longitude: nearest.deliveryLng };
+      const location = nearest.location;
       setDeliveryLocation(location);
       setDeliveryLocationSource(deliveryLocationSource === "gps" ? "gps" : "manual_pin");
-      setDeliveryUnit(nearest);
+      setDeliveryUnit(nearest.unit);
       setDeliveryDistanceKm(nearest.distanceKm);
       setDeliveryRangeId(nearest.deliveryRangeId);
       setLocationConfirmed(true);
@@ -934,22 +1061,37 @@ function CheckoutPage() {
 
       console.info("[Maximus][checkout][delivery-pin]", {
         metodo: deliveryLocationSource === "gps" ? "gps" : "manual_pin",
-        enderecoReferencia: formatManualAddress(manualAddress),
-        latitudeCliente: nearest.deliveryLat,
-        longitudeCliente: nearest.deliveryLng,
-        unidadeAtribuida: deliveryQuoteUnitLabel(nearest),
+        enderecoReferencia: formatManualAddress({
+          street: address.rua.trim(),
+          number: address.numero.trim(),
+          neighborhood: address.bairro.trim(),
+          city: "Santarém",
+          state: "Pará",
+          postalCode: address.cep.trim() || undefined,
+        }),
+        latitudeCliente: location?.latitude,
+        longitudeCliente: location?.longitude,
+        unidadeAtribuida: deliveryQuoteUnitLabel(nearest.unit),
         distanciaKm: nearest.distanceKm,
       });
 
       const resolved = {
         location,
-        unit: nearest,
+        unit: nearest.unit,
         distanceKm: nearest.distanceKm,
         deliveryRangeId: nearest.deliveryRangeId,
+        estimatedMinutes: nearest.estimatedMinutes,
         locationSource: deliveryLocationSource === "gps" ? "gps" : ("manual_pin" as const),
         geocodingStatus:
           deliveryLocationSource === "gps" ? "gps_confirmed" : ("not_needed" as GeocodingStatus),
-        displayAddress: formatManualAddress(manualAddress),
+        displayAddress: formatManualAddress({
+          street: address.rua.trim(),
+          number: address.numero.trim(),
+          neighborhood: address.bairro.trim(),
+          city: "Santarém",
+          state: "Pará",
+          postalCode: address.cep.trim() || undefined,
+        }),
       };
       setPendingDelivery(resolved);
       return resolved;
@@ -979,16 +1121,51 @@ function CheckoutPage() {
     return unit.id === deliveryUnit?.id ? deliveryRules : await loadDeliveryRules(unit.id);
   }
 
+  async function repeatLastOrder() {
+    const lastOrder = currentCustomer?.orders[0];
+    if (!lastOrder) return;
+    try {
+      const data = await loadPublicMenu(selectedUnitSlug, "delivery");
+      const productsByName = new Map(
+        data.products.map((product) => [product.name.trim().toLowerCase(), product]),
+      );
+      let added = 0;
+      clearItems();
+      for (const item of lastOrder.items) {
+        const product = productsByName.get(item.name.trim().toLowerCase());
+        if (!product) continue;
+        const selections = getDefaultSelections(product);
+        for (let index = 0; index < item.quantity; index += 1) {
+          addItem(product, selections);
+          added += 1;
+        }
+      }
+      if (!added) {
+        toast.error("Não foi possível repetir os itens disponíveis desse pedido.");
+        return;
+      }
+      toast.success("Último pedido adicionado à sacola.");
+      setStep("mode");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível repetir o pedido.");
+    }
+  }
+
   function resolveManualDeliveryUnit() {
-    if (deliveryLocation) return deliveryUnit;
-    if (!selectedUnitSlug) return deliveryUnit;
+    if (deliveryLocation) return deliveryUnit ?? activeUnit;
+    if (!selectedUnitSlug) return deliveryUnit ?? activeUnit;
     return (
       units.find(
         (item) => (item.slug === selectedUnitSlug || item.id === selectedUnitSlug) && item.isOpen,
       ) ??
       units.find((item) => item.slug === selectedUnitSlug || item.id === selectedUnitSlug) ??
-      deliveryUnit
+      deliveryUnit ??
+      activeUnit
     );
+  }
+
+  function resolveActiveDeliveryUnit() {
+    return requestedActiveUnit ?? activeUnit ?? deliveryUnit ?? units[0] ?? null;
   }
 
   function copyPix(amount: number) {
@@ -1006,7 +1183,7 @@ function CheckoutPage() {
   }
 
   const currentOrderMode: OrderTrackMode =
-    consumeMode === "delivery" && !isQrDineIn
+    consumeMode === "delivery" && !activeIsQrDineIn
       ? "delivery"
       : consumeMode === "mesa" || consumeMode === "local"
         ? "mesa"
@@ -1016,6 +1193,7 @@ function CheckoutPage() {
     unit: resolveManualDeliveryUnit(),
     distanceKm: deliveryDistanceKm,
     rules: deliveryRules,
+    deliveryZone: selectedDeliveryZone,
     neighborhood: address.bairro,
     locationSource: deliveryLocationSource,
   });
@@ -1043,7 +1221,7 @@ function CheckoutPage() {
       <SiteHeader
         mesa={effectiveTable}
         unidade={effectiveUnit}
-        mode={isQrDineIn ? "dine_in" : undefined}
+        mode={activeIsQrDineIn ? "dine_in" : undefined}
       />
       <div className="mx-auto max-w-lg px-4 pt-6">
         <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 text-sm">
@@ -1054,18 +1232,83 @@ function CheckoutPage() {
         </div>
       </div>
 
+      {/* ---------- CUSTOMER DATA ---------- */}
+      {step === "contact" && (
+        <CheckoutShell title="Confirme seus dados" subtitle="Depois escolha como quer receber.">
+          <div className="space-y-4">
+            {hasSavedProfile && !editingProfile ? (
+              <>
+                <CustomerProfileCard
+                  name={name}
+                  phone={phone}
+                  onContinue={async () => {
+                    await persistCustomer();
+                    setStep("mode");
+                  }}
+                  onChange={() => {
+                    setEditingProfile(true);
+                    setPrivacyConsent(false);
+                  }}
+                />
+                {currentCustomer?.orders[0] && (
+                  <button
+                    type="button"
+                    onClick={repeatLastOrder}
+                    className="w-full rounded-md bg-secondary px-3 py-2 text-xs font-bold text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    Pedir novamente: {currentCustomer.orders[0].number}
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <Field label="Nome" value={name} onChange={setName} autoComplete="name" />
+                <Field
+                  label="Telefone"
+                  value={phone}
+                  onChange={setPhone}
+                  type="tel"
+                  autoComplete="tel"
+                />
+                <Field
+                  label="E-mail (opcional)"
+                  value={email}
+                  onChange={setEmail}
+                  type="email"
+                  autoComplete="email"
+                />
+                <ConsentCheckbox checked={privacyConsent} onCheckedChange={setPrivacyConsent} />
+                <Button
+                  className="w-full bg-gradient-primary font-bold"
+                  size="lg"
+                  disabled={!name || !phone || (!hasSavedProfile && !privacyConsent)}
+                  onClick={async () => {
+                    await persistCustomer();
+                    setEditingProfile(false);
+                    setStep("mode");
+                  }}
+                >
+                  Confirmar dados
+                </Button>
+              </>
+            )}
+          </div>
+        </CheckoutShell>
+      )}
+
       {/* ---------- MODE SELECTION ---------- */}
       {step === "mode" && (
         <CheckoutShell
           title="Como você quer receber seu pedido?"
           subtitle={
-            isQrDineIn && effectiveTable
+            activeIsQrDineIn && effectiveTable
               ? `Pedido da Mesa ${normalizeTableNumber(effectiveTable)}`
-              : "Revise se está tudo certo antes de continuar."
+              : "Escolha uma opção para continuar."
           }
+          onBack={() => setStep("contact")}
         >
           <div className="space-y-3">
-            {isQrDineIn && effectiveTable ? (
+            {activeIsQrDineIn && effectiveTable ? (
               <>
                 <BigOption
                   label={`Comer na Mesa ${displayMesa}`}
@@ -1073,7 +1316,7 @@ function CheckoutPage() {
                   onClick={() => {
                     setConsumeMode("mesa");
                     setTable(normalizeTableNumber(effectiveTable));
-                    setStep("mesaConfirm");
+                    setStep("payment");
                   }}
                 />
                 <BigOption
@@ -1081,7 +1324,7 @@ function CheckoutPage() {
                   description="Retire e leve seu pedido."
                   onClick={() => {
                     setConsumeMode("levar");
-                    setStep("levar");
+                    setStep("payment");
                   }}
                 />
               </>
@@ -1092,7 +1335,7 @@ function CheckoutPage() {
                   description="Receba no seu endereço."
                   onClick={() => {
                     setConsumeMode("delivery");
-                    setStep(hasSavedProfile && !editingProfile ? "location" : "contact");
+                    setStep("location");
                   }}
                 />
                 <BigOption
@@ -1100,7 +1343,7 @@ function CheckoutPage() {
                   description="Retire na loja quando estiver pronto."
                   onClick={() => {
                     setConsumeMode("balcao");
-                    setStep("balcao");
+                    setStep("payment");
                   }}
                 />
                 <BigOption
@@ -1220,68 +1463,9 @@ function CheckoutPage() {
         </CheckoutShell>
       )}
 
-      {/* ---------- DELIVERY: CONTACT ---------- */}
-      {step === "contact" && (
-        <CheckoutShell
-          title="Seus dados"
-          subtitle="Para entrega (Delivery)"
-          onBack={() => setStep("mode")}
-        >
-          <div className="space-y-4">
-            {hasSavedProfile && !editingProfile ? (
-              <CustomerProfileCard
-                name={name}
-                phone={phone}
-                onContinue={async () => {
-                  await persistCustomer();
-                  setStep("location");
-                }}
-                onChange={() => {
-                  setEditingProfile(true);
-                  setPrivacyConsent(false);
-                }}
-              />
-            ) : (
-              <>
-                <Field label="Nome" value={name} onChange={setName} autoComplete="name" />
-                <Field
-                  label="Telefone"
-                  value={phone}
-                  onChange={setPhone}
-                  type="tel"
-                  autoComplete="tel"
-                />
-                <Field
-                  label="E-mail (opcional)"
-                  value={email}
-                  onChange={setEmail}
-                  type="email"
-                  autoComplete="email"
-                />
-                <ConsentCheckbox checked={privacyConsent} onCheckedChange={setPrivacyConsent} />
-              </>
-            )}
-            {(!hasSavedProfile || editingProfile) && (
-              <Button
-                className="w-full bg-gradient-primary font-bold"
-                size="lg"
-                disabled={!name || !phone || (!hasSavedProfile && !privacyConsent)}
-                onClick={async () => {
-                  await persistCustomer();
-                  setEditingProfile(false);
-                  setStep("location");
-                }}
-              >
-                Continuar
-              </Button>
-            )}
-          </div>
-        </CheckoutShell>
-      )}
-
       {/* ---------- DELIVERY: LOCATION PERMISSION ---------- */}
       {step === "location" && (
-        <CheckoutShell title="Endereço de entrega" onBack={() => setStep("contact")}>
+        <CheckoutShell title="Endereço de entrega" onBack={() => setStep("mode")}>
           {currentCustomer?.addresses.length ? (
             <SavedAddresses
               addresses={currentCustomer.addresses}
@@ -1297,6 +1481,7 @@ function CheckoutPage() {
                 setEditingAddressId(saved.id);
                 fillAddress(saved);
                 applySavedAddressLocation(saved);
+                setAddressMode("form");
                 setStep("addressManual");
               }}
               onDelete={async (id) => {
@@ -1307,6 +1492,7 @@ function CheckoutPage() {
                   if (selectedAddressId === id) {
                     setSelectedAddressId("");
                     setAddress(EMPTY_ADDRESS);
+                    setResolvedDeliveryZoneId("");
                     setDeliveryLocation(null);
                     setDeliveryDistanceKm(null);
                     setDeliveryRangeId(null);
@@ -1333,16 +1519,18 @@ function CheckoutPage() {
                 setSelectedAddressId("");
                 setEditingAddressId(null);
                 setAddress(EMPTY_ADDRESS);
+                setResolvedDeliveryZoneId("");
                 setDeliveryLocation(null);
                 setDeliveryDistanceKm(null);
                 setDeliveryRangeId(null);
                 setSaveAsDefault(currentCustomer.addresses.length === 0);
+                setAddressMode("start");
                 setStep("addressManual");
               }}
             />
           ) : (
-            <p className="mb-4 text-muted-foreground">
-              Preencha o endereço para calcular a entrega. A localização atual é opcional.
+            <p className="mb-4 text-sm text-muted-foreground">
+              Informe o endereço para calcular a entrega.
             </p>
           )}
           <div className="space-y-3">
@@ -1359,48 +1547,51 @@ function CheckoutPage() {
             {selectedAddressId && isAddressComplete && (
               <Button
                 className="w-full bg-gradient-primary font-bold"
-                size="lg"
-                disabled={subtotal < deliveryQuote.minimumOrderValue}
+                size="sm"
+                disabled={subtotal < deliveryQuote.minimumOrderValue || !selectedDeliveryZone}
                 onClick={async () => {
-                  const resolved = await resolveManualAddressLocation();
-                  const nextUnit = resolved?.unit ?? resolveManualDeliveryUnit();
-                  const nextDistanceKm = resolved?.distanceKm ?? deliveryDistanceKm;
-                  const nextRules = await loadRulesForResolvedUnit(nextUnit);
                   const nextQuote = calculateDeliveryQuote({
                     subtotal,
-                    unit: nextUnit,
-                    distanceKm: nextDistanceKm,
-                    rules: nextRules,
+                    unit: activeUnit ?? deliveryUnit,
+                    distanceKm: null,
+                    rules: [],
+                    deliveryZone: selectedDeliveryZone,
                     neighborhood: address.bairro,
-                    locationSource: resolved?.locationSource ?? deliveryLocationSource,
+                    locationSource: "manual_unavailable",
                   });
                   if (nextQuote.fee == null) {
-                    setGeocodingStatus(resolved?.geocodingStatus ?? "not_needed");
                     toast.error(nextQuote.blockedReason ?? "Não foi possível calcular a entrega.");
                     return;
                   }
                   setStep("payment");
                 }}
               >
-                Entregar neste endereço
+                Entregar nesse endereço
               </Button>
             )}
-            <Button
-              className="w-full bg-gradient-primary font-bold"
-              size="lg"
-              disabled={locating}
-              onClick={() => {
-                setDeliveryAddressMode("gps");
-                requestGeolocation();
-              }}
-            >
-              <MapPin className="mr-2 h-4 w-4" />{" "}
-              {locating ? "Solicitando localização..." : "Usar minha localização atual"}
-            </Button>
+            {selectedAddressId && !selectedDeliveryZone && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+                <p className="text-sm font-semibold text-amber-600">
+                  Não conseguimos identificar a região de entrega desse endereço.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-3 w-full"
+                  size="sm"
+                  onClick={() => {
+                    setAddressMode("form");
+                    setStep("addressManual");
+                  }}
+                >
+                  Ajustar endereço
+                </Button>
+              </div>
+            )}
             <Button
               variant="outline"
               className="w-full"
-              size="lg"
+              size="sm"
               onClick={() => {
                 setDeliveryAddressMode("other");
                 setPendingDelivery(null);
@@ -1408,10 +1599,13 @@ function CheckoutPage() {
                 setDeliveryDistanceKm(null);
                 setDeliveryRangeId(null);
                 setDeliveryUnit(null);
+                setAddressMode("start");
                 setStep("addressManual");
               }}
             >
-              Entregar em outro endereço
+              {currentCustomer?.addresses.length
+                ? "Entregar em outro endereço"
+                : "Cadastrar endereço"}
             </Button>
           </div>
         </CheckoutShell>
@@ -1419,15 +1613,80 @@ function CheckoutPage() {
 
       {/* ---------- DELIVERY: ADDRESS MANUAL ---------- */}
       {step === "addressManual" && (
-        <CheckoutShell title="Endereço de entrega" onBack={() => setStep("location")}>
+        <CheckoutShell
+          title={addressMode === "start" ? "Novo Endereço" : "Novo Endereço"}
+          subtitle={
+            addressMode === "start" ? "Em qual endereço você deseja receber seu pedido?" : undefined
+          }
+          onBack={() => setStep(currentCustomer?.addresses.length ? "location" : "mode")}
+        >
           <div className="space-y-4">
+            {addressMode === "start" && (
+              <>
+                <div className="space-y-2">
+                  <Label>Insira seu endereço ou CEP</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={addressSearch}
+                      onChange={(event) => setAddressSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") void searchGoogleAddress();
+                      }}
+                      placeholder="Rua, bairro ou CEP"
+                    />
+                    <Button
+                      type="button"
+                      size="icon"
+                      disabled={addressLookupLoading || !googleMapsEnabled}
+                      onClick={searchGoogleAddress}
+                    >
+                      <Search className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {!googleMapsEnabled && (
+                    <p className="text-xs text-muted-foreground">
+                      Google Maps não configurado. O preenchimento manual continua disponível.
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-xs font-bold uppercase text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />
+                  ou
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start"
+                  disabled={addressLookupLoading || !googleMapsEnabled}
+                  onClick={useBrowserLocation}
+                >
+                  <LocateFixed className="mr-2 h-4 w-4" /> Usar minha localização
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => {
+                    setAddressMode("form");
+                    setShowDeliveryMap(true);
+                    setDeliveryLocation(
+                      deliveryLocation ??
+                        (activeUnit
+                          ? { latitude: activeUnit.latitude, longitude: activeUnit.longitude }
+                          : { latitude: -2.4431, longitude: -54.7083 }),
+                    );
+                  }}
+                >
+                  <MapPinned className="mr-2 h-4 w-4" /> Buscar endereço pelo mapa
+                </Button>
+              </>
+            )}
+            {addressMode === "form" && (
+              <>
             {locationConfirmed && (
               <div className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-sm text-primary">
-                <p className="font-bold">
-                  {deliveryUnit
-                    ? `Pedido direcionado para a unidade mais próxima: ${deliveryUnit.name}.`
-                    : "Localização encontrada. Complete o endereço para validar a entrega."}
-                </p>
+                <p className="font-bold">Complete o endereço para salvar.</p>
               </div>
             )}
             {locationDenied && (
@@ -1446,37 +1705,39 @@ function CheckoutPage() {
                 <div>
                   <h3 className="font-extrabold">Endereço de entrega</h3>
                   <p className="text-xs text-muted-foreground">
-                    Confirme o local da entrega pelo GPS ou marque no mapa.
+                    Arraste para ajustar o marcador.
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setDeliveryAddressMode("gps");
-                    setPendingDelivery(null);
-                    requestGeolocation();
-                  }}
-                  disabled={locating}
-                >
-                  <MapPin className="mr-2 h-4 w-4" />
-                  {locating ? "Localizando..." : "Usar minha localização atual"}
-                </Button>
               </div>
-              {deliveryLocation ? (
-                <DeliveryLocationSummary
-                  address={address}
-                  deliveryUnit={resolveManualDeliveryUnit()}
-                  deliveryDistanceKm={deliveryDistanceKm}
-                  deliveryQuote={deliveryQuote}
-                  subtotal={subtotal}
-                  showBlockedReason={isAddressComplete}
-                />
-              ) : (
-                <p className="rounded-xl border border-border bg-background p-3 text-sm text-muted-foreground">
-                  Confirme o local da entrega pelo GPS ou marque no mapa. O endereço escrito fica
-                  como referência do pedido.
+              <GoogleAddressMap
+                value={deliveryLocation}
+                fallback={
+                  activeUnit
+                    ? { latitude: activeUnit.latitude, longitude: activeUnit.longitude }
+                    : { latitude: -2.4431, longitude: -54.7083 }
+                }
+                className="h-64 rounded-xl"
+                onChange={async (point) => {
+                  setDeliveryLocation(point);
+                  setDeliveryLocationSource("manual_pin");
+                  try {
+                    applyGoogleAddress(await reverseGeocodeLatLng(point.latitude, point.longitude));
+                  } catch (error) {
+                    setGeocodingStatus("geocoding_failed");
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Não foi possível buscar o endereço deste ponto.",
+                    );
+                  }
+                }}
+              />
+              <p className="mt-2 text-center text-xs font-semibold text-muted-foreground">
+                Arraste para ajustar o marcador
+              </p>
+              {detectedAddress && (
+                <p className="mt-3 rounded-xl border border-border bg-background p-3 text-sm text-muted-foreground">
+                  {detectedAddress}
                 </p>
               )}
             </section>
@@ -1494,6 +1755,7 @@ function CheckoutPage() {
                   setSelectedAddressId(saved.id);
                   setEditingAddressId(saved.id);
                   fillAddress(saved);
+                  setAddressMode("form");
                 }}
                 onDelete={async (id) => {
                   try {
@@ -1503,6 +1765,7 @@ function CheckoutPage() {
                     if (selectedAddressId === id) {
                       setSelectedAddressId("");
                       setAddress(EMPTY_ADDRESS);
+                      setResolvedDeliveryZoneId("");
                       setDeliveryLocation(null);
                       setDeliveryDistanceKm(null);
                       setDeliveryRangeId(null);
@@ -1537,17 +1800,19 @@ function CheckoutPage() {
                   setSelectedAddressId("");
                   setEditingAddressId(null);
                   setAddress(EMPTY_ADDRESS);
+                  setResolvedDeliveryZoneId("");
                   setDeliveryLocation(null);
                   setDeliveryDistanceKm(null);
                   setDeliveryRangeId(null);
                   setSaveAsDefault(currentCustomer.addresses.length === 0);
+                  setAddressMode("start");
                 }}
               />
             ) : null}
             <div>
-              <Label className="mb-2 block">Apelido</Label>
+              <Label className="mb-2 block">Nome do endereço</Label>
               <div className="grid grid-cols-3 gap-2">
-                {(["Casa", "Trabalho", "Outro"] as const).map((label) => (
+                {(["Casa", "Trabalho", "Amigos"] as const).map((label) => (
                   <button
                     key={label}
                     type="button"
@@ -1564,7 +1829,7 @@ function CheckoutPage() {
               </div>
             </div>
             <Field
-              label="Rua"
+              label="Endereço"
               value={address.rua}
               onChange={(v) => setAddress({ ...address, rua: v })}
               autoComplete="address-line1"
@@ -1575,10 +1840,23 @@ function CheckoutPage() {
               onChange={(v) => setAddress({ ...address, numero: v })}
               inputMode="numeric"
             />
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={address.numero === "S/N"}
+                onCheckedChange={(checked) =>
+                  setAddress({ ...address, numero: checked ? "S/N" : "" })
+                }
+              />
+              Sem número
+            </label>
             <Field
               label="Bairro"
               value={address.bairro}
-              onChange={(v) => setAddress({ ...address, bairro: v })}
+              onChange={(v) => {
+                const zone = matchDeliveryZone(v, address.rua, detectedAddress, addressSearch);
+                setResolvedDeliveryZoneId(zone?.id ?? "");
+                setAddress({ ...address, bairro: v });
+              }}
               autoComplete="address-level3"
             />
             <Field
@@ -1588,6 +1866,20 @@ function CheckoutPage() {
               inputMode="numeric"
               autoComplete="postal-code"
             />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="Cidade"
+                value={address.cidade}
+                onChange={(v) => setAddress({ ...address, cidade: v })}
+                autoComplete="address-level2"
+              />
+              <Field
+                label="Estado"
+                value={address.estado}
+                onChange={(v) => setAddress({ ...address, estado: v })}
+                autoComplete="address-level1"
+              />
+            </div>
             <Field
               label="Complemento"
               value={address.complemento}
@@ -1606,170 +1898,107 @@ function CheckoutPage() {
               />
               Definir como endereço principal
             </label>
-            <section className="rounded-2xl border border-border bg-card p-4">
-              <div className="mb-3">
-                <h3 className="font-extrabold">Local no mapa</h3>
-                <p className="text-xs text-muted-foreground">
-                  Toque no mapa para marcar o ponto real da entrega.
-                </p>
-              </div>
-              <LocationPickerMap
-                value={deliveryLocation}
-                fallback={
-                  deliveryLocation ??
-                  (deliveryUnit
-                    ? { latitude: deliveryUnit.latitude, longitude: deliveryUnit.longitude }
-                    : units[0]
-                      ? { latitude: units[0].latitude, longitude: units[0].longitude }
-                      : undefined)
-                }
-                className="h-72 rounded-xl"
-                onChange={(point) => {
-                  setDeliveryAddressMode("other");
-                  setPendingDelivery(null);
-                  applyDeliveryLocation(point, "manual_pin")
-                    .then((nearest) => {
-                      if (nearest) toast.success("Local da entrega marcado.");
-                    })
-                    .catch((error) => {
-                      toast.error(
-                        error instanceof Error
-                          ? error.message
-                          : "Não foi possível calcular a entrega.",
-                      );
-                    });
-                }}
-              />
+            <section className="rounded-xl border border-border bg-card p-3">
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 text-left text-sm font-bold"
+                onClick={() => setShowDeliveryMap((current) => !current)}
+              >
+                <span>Ajustar ponto no mapa (opcional)</span>
+                <span className="text-xs text-primary">
+                  {showDeliveryMap ? "Ocultar" : "Abrir"}
+                </span>
+              </button>
+              {showDeliveryMap && (
+                <div className="mt-3">
+                  <GoogleAddressMap
+                    value={deliveryLocation}
+                    fallback={
+                      deliveryLocation ??
+                      (deliveryUnit
+                        ? { latitude: deliveryUnit.latitude, longitude: deliveryUnit.longitude }
+                        : units[0]
+                          ? { latitude: units[0].latitude, longitude: units[0].longitude }
+                          : undefined)
+                    }
+                    className="h-64 rounded-xl"
+                    onChange={async (point) => {
+                      setDeliveryAddressMode("other");
+                      setPendingDelivery(null);
+                      setDeliveryLocation(point);
+                      try {
+                        applyGoogleAddress(await reverseGeocodeLatLng(point.latitude, point.longitude));
+                      } catch (error) {
+                        setGeocodingStatus("geocoding_failed");
+                        toast.error(
+                          error instanceof Error
+                            ? error.message
+                            : "Não foi possível buscar o endereço deste ponto.",
+                        );
+                      }
+                    }}
+                  />
+                </div>
+              )}
             </section>
-            {isAddressComplete && deliveryQuote.blockedReason ? (
+            {!selectedDeliveryZone && address.rua.trim() && address.numero.trim() ? (
               <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-600">
-                {deliveryQuote.blockedReason}
+                Não conseguimos identificar a região de entrega desse endereço. Ajuste o pino no
+                mapa ou tente buscar o endereço novamente.
               </p>
             ) : null}
-            {pendingDelivery?.location && (
-              <section className="rounded-2xl border border-primary/30 bg-primary/10 p-4 text-sm">
-                <h3 className="font-extrabold text-primary">Entrega calculada</h3>
-                <p className="mt-2 font-semibold">
-                  {pendingDelivery.displayAddress ||
-                    formatManualAddress({
-                      street: address.rua,
-                      number: address.numero,
-                      neighborhood: address.bairro,
-                      city: "Santarém",
-                      state: "PA",
-                      postalCode: address.cep,
-                    })}
-                </p>
-                <div className="mt-3 space-y-1 text-xs font-semibold text-muted-foreground">
-                  <p>Bairro: {address.bairro}</p>
-                  <p>Cidade: Santarém - PA</p>
-                  <p>Unidade responsável: {pendingDelivery.unit?.name ?? "A definir"}</p>
-                  <p>
-                    Distância aproximada:{" "}
-                    {pendingDelivery.distanceKm != null
-                      ? `${pendingDelivery.distanceKm.toFixed(1)} km`
-                      : "não calculada"}
-                  </p>
-                  <p>
-                    Taxa de entrega:{" "}
-                    {calculateDeliveryQuote({
-                      subtotal,
-                      unit: pendingDelivery.unit,
-                      distanceKm: pendingDelivery.distanceKm,
-                      rules:
-                        pendingDelivery.unit?.id === deliveryUnit?.id && deliveryRules.length
-                          ? deliveryRules
-                          : [],
-                      neighborhood: address.bairro,
-                      locationSource: pendingDelivery.locationSource,
-                    }).fee == null
-                      ? "não calculada"
-                      : formatPrice(
-                          calculateDeliveryQuote({
-                            subtotal,
-                            unit: pendingDelivery.unit,
-                            distanceKm: pendingDelivery.distanceKm,
-                            rules:
-                              pendingDelivery.unit?.id === deliveryUnit?.id && deliveryRules.length
-                                ? deliveryRules
-                                : [],
-                            neighborhood: address.bairro,
-                            locationSource: pendingDelivery.locationSource,
-                          }).fee ?? 0,
-                        )}
-                  </p>
-                </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  <Button
-                    type="button"
-                    className="bg-gradient-primary font-bold"
-                    onClick={async () => {
-                      const customer = await persistCustomer();
-                      if (!customer) return;
-                      const rules = await loadRulesForResolvedUnit(pendingDelivery.unit);
-                      const quote = calculateDeliveryQuote({
-                        subtotal,
-                        unit: pendingDelivery.unit,
-                        distanceKm: pendingDelivery.distanceKm,
-                        rules,
-                        neighborhood: address.bairro,
-                        locationSource: pendingDelivery.locationSource,
-                      });
-                      if (quote.fee == null) {
-                        toast.error(quote.blockedReason ?? "Não foi possível calcular a entrega.");
-                        return;
-                      }
-                      if (!selectedAddressId || editingAddressId) {
-                        await saveCurrentAddress(customer.id, pendingDelivery.location);
-                      }
-                      setStep("payment");
-                    }}
-                  >
-                    Confirmar local
-                  </Button>
-                  <Button type="button" variant="outline" onClick={() => setPendingDelivery(null)}>
-                    Corrigir endereço
-                  </Button>
-                </div>
-              </section>
-            )}
             <Button
               className="w-full bg-gradient-primary font-bold"
               size="lg"
               disabled={
                 noOpenUnits ||
                 subtotal < deliveryQuote.minimumOrderValue ||
-                !deliveryLocation ||
                 !address.rua.trim() ||
                 !address.numero.trim() ||
-                !address.bairro.trim()
+                !selectedDeliveryZone
               }
               onClick={async () => {
-                setDeliveryAddressMode("other");
-                const resolved = await resolveManualAddressLocation();
-                if (!resolved?.location) {
-                  toast.error("Confirme o local da entrega pelo GPS ou marque no mapa.");
-                  return;
-                }
-                const nextUnit = resolved.unit;
-                const nextDistanceKm = resolved.distanceKm;
-                const nextRules = await loadRulesForResolvedUnit(nextUnit);
                 const nextQuote = calculateDeliveryQuote({
                   subtotal,
-                  unit: nextUnit,
-                  distanceKm: nextDistanceKm,
-                  rules: nextRules,
+                  unit: activeUnit ?? deliveryUnit,
+                  distanceKm: null,
+                  rules: [],
+                  deliveryZone: selectedDeliveryZone ?? resolveZoneFromCurrentAddress(),
                   neighborhood: address.bairro,
-                  locationSource: resolved.locationSource,
+                  locationSource: "manual_unavailable",
                 });
-                if (nextQuote.fee == null) {
-                  toast.error(nextQuote.blockedReason ?? "Não foi possível calcular a entrega.");
+                const autoZone = selectedDeliveryZone ?? resolveZoneFromCurrentAddress();
+                if (!autoZone) {
+                  setResolvedDeliveryZoneId("");
+                  toast.error(
+                    "Não conseguimos identificar a região de entrega desse endereço. Ajuste o pino no mapa ou tente buscar o endereço novamente.",
+                  );
                   return;
                 }
+                setResolvedDeliveryZoneId(autoZone.id);
+                if (nextQuote.fee == null) {
+                  toast.error("Não foi possível calcular a entrega para esse endereço.");
+                  return;
+                }
+                const customer = await persistCustomer();
+                if (!customer) return;
+                const selectedSavedAddress = currentCustomer?.addresses.find(
+                  (item) => item.id === selectedAddressId,
+                );
+                if (
+                  !selectedAddressId ||
+                  editingAddressId ||
+                  selectedSavedAddress?.deliveryZoneId !== autoZone.id
+                ) {
+                  await saveCurrentAddress(customer.id, deliveryLocation, autoZone);
+                }
+                setStep("payment");
               }}
             >
-              Calcular entrega
+              Salvar
             </Button>
+              </>
+            )}
           </div>
         </CheckoutShell>
       )}
@@ -1781,54 +2010,52 @@ function CheckoutPage() {
           subtitle={`Total: ${formatPrice(finalTotal)}`}
           onBack={() => {
             if (consumeMode === "delivery") setStep("addressManual");
-            else if (consumeMode === "balcao") setStep("balcao");
-            else if (consumeMode === "levar") setStep("levar");
-            else if (consumeMode === "mesa") setStep("mesaConfirm");
+            else if (consumeMode === "balcao") setStep("mode");
+            else if (consumeMode === "levar") setStep("mode");
+            else if (consumeMode === "mesa") setStep("mode");
             else if (consumeMode === "local") setStep("local");
             else setStep("mode");
           }}
         >
           <div className="space-y-3">
+            <CheckoutReviewSummary
+              customerName={name}
+              customerPhone={phone}
+              address={consumeMode === "delivery" ? address : null}
+              paymentLabel="A escolher"
+              subtotal={subtotal}
+              deliveryFee={consumeMode === "delivery" ? deliveryQuote.fee : 0}
+              total={finalTotal}
+            />
             <BigOption
-              label={
-                consumeMode === "delivery"
-                  ? "Pagar na entrega"
-                  : consumeMode === "mesa" || consumeMode === "local"
-                    ? "Pagar no local"
-                    : "Pagar na retirada"
-              }
+              label="Dinheiro"
+              description="Informe troco se precisar."
+              icon={<Banknote className="h-6 w-6" />}
+              onClick={() => setStep("payCash")}
+            />
+            <BigOption
+              label="Cartão"
               description={
                 consumeMode === "delivery"
-                  ? "Dinheiro, cartão ou Pix ao receber."
-                  : consumeMode === "mesa" || consumeMode === "local"
-                    ? "Dinheiro, cartão ou Pix no atendimento."
-                    : "Dinheiro, cartão ou Pix ao retirar."
+                  ? "Crédito ou débito na entrega."
+                  : "Crédito ou débito no atendimento."
               }
-              onClick={() => setStep("payDelivery")}
+              icon={<CreditCard className="h-6 w-6" />}
+              onClick={() => setStep("payCard")}
             />
             <BigOption
-              label="Pagar pelo app"
-              description="Pague agora via Pix."
-              onClick={() => setStep("payApp")}
+              label="Pix"
+              description="Escolha pagar agora pelo app ou no recebimento."
+              icon={<QrCode className="h-6 w-6" />}
+              onClick={() => setStep("payPix")}
             />
-          </div>
-        </CheckoutShell>
-      )}
-
-      {/* ---------- PAYMENT: ON DELIVERY METHOD ---------- */}
-      {step === "payDelivery" && (
-        <CheckoutShell title="Escolha a forma de pagamento" onBack={() => setStep("payment")}>
-          <div className="space-y-3">
-            <BigOption label="Dinheiro" onClick={() => setStep("payCash")} />
-            <BigOption label="Cartão" onClick={() => setStep("payCard")} />
-            <BigOption label="Pix" onClick={() => setStep("payPixDelivery")} />
           </div>
         </CheckoutShell>
       )}
 
       {/* ---------- PAYMENT: CASH ---------- */}
       {step === "payCash" && (
-        <CheckoutShell title="Pagamento em dinheiro" onBack={() => setStep("payDelivery")}>
+        <CheckoutShell title="Pagamento em dinheiro" onBack={() => setStep("payment")}>
           <CheckoutReviewSummary
             customerName={name}
             customerPhone={phone}
@@ -1874,7 +2101,7 @@ function CheckoutPage() {
         <CheckoutShell
           title="Pagamento no cartão"
           subtitle="Selecione o tipo"
-          onBack={() => setStep("payDelivery")}
+          onBack={() => setStep("payment")}
         >
           <div className="space-y-3">
             <CheckoutReviewSummary
@@ -1910,9 +2137,48 @@ function CheckoutPage() {
         </CheckoutShell>
       )}
 
+      {/* ---------- PAYMENT: PIX CHOICE ---------- */}
+      {step === "payPix" && (
+        <CheckoutShell title="Como quer pagar no Pix?" onBack={() => setStep("payment")}>
+          <div className="space-y-3">
+            <CheckoutReviewSummary
+              customerName={name}
+              customerPhone={phone}
+              address={consumeMode === "delivery" ? address : null}
+              paymentLabel="Pix"
+              subtotal={subtotal}
+              deliveryFee={consumeMode === "delivery" ? deliveryQuote.fee : 0}
+              total={finalTotal}
+            />
+            <BigOption
+              label="Pix pelo app"
+              description="Copie a chave Pix e envie o pedido aguardando confirmação."
+              icon={<Smartphone className="h-6 w-6" />}
+              onClick={() => setStep("payApp")}
+            />
+            <BigOption
+              label={
+                consumeMode === "delivery"
+                  ? "Pix na entrega"
+                  : consumeMode === "mesa" || consumeMode === "local"
+                    ? "Pix no local"
+                    : "Pix na retirada"
+              }
+              description={
+                consumeMode === "delivery"
+                  ? "Pague ao entregador quando receber."
+                  : "Pague direto no atendimento."
+              }
+              icon={<QrCode className="h-6 w-6" />}
+              onClick={() => setStep("payPixDelivery")}
+            />
+          </div>
+        </CheckoutShell>
+      )}
+
       {/* ---------- PAYMENT: PIX ON DELIVERY ---------- */}
       {step === "payPixDelivery" && (
-        <CheckoutShell title="Pix na entrega" onBack={() => setStep("payDelivery")}>
+        <CheckoutShell title="Pix no recebimento" onBack={() => setStep("payPix")}>
           <CheckoutReviewSummary
             customerName={name}
             customerPhone={phone}
@@ -1947,7 +2213,7 @@ function CheckoutPage() {
 
       {/* ---------- PAYMENT: PIX APP ---------- */}
       {step === "payApp" && (
-        <CheckoutShell title="Pagar pelo app (Pix)" onBack={() => setStep("payment")}>
+        <CheckoutShell title="Pagar pelo app (Pix)" onBack={() => setStep("payPix")}>
           <CheckoutReviewSummary
             customerName={name}
             customerPhone={phone}
@@ -2057,14 +2323,14 @@ function CustomerProfileCard({
 }) {
   return (
     <section className="rounded-2xl border border-border bg-card p-4">
-      <p className="text-sm text-muted-foreground">Você está pedindo como</p>
+      <p className="text-sm text-muted-foreground">Dados encontrados</p>
       <h3 className="mt-1 text-xl font-black">{name}</h3>
       <p className="mt-1 font-bold text-primary">{phone}</p>
       <Button className="mt-4 w-full bg-gradient-primary font-bold" size="lg" onClick={onContinue}>
-        Continuar como este cliente
+        Confirmar
       </Button>
       <Button type="button" variant="ghost" className="mt-2 w-full" onClick={onChange}>
-        Trocar dados
+        Editar informações
       </Button>
     </section>
   );
@@ -2104,13 +2370,7 @@ function DeliveryLocationSummary({
       <div className="mt-3 space-y-1 text-xs font-semibold text-muted-foreground">
         <p>Unidade: {deliveryUnit?.name ?? "A definir"}</p>
         <p>
-          Distância aproximada:{" "}
-          {deliveryDistanceKm != null
-            ? `${deliveryDistanceKm.toFixed(1)} km`
-            : "não calculada pelo GPS"}
-        </p>
-        <p>
-          Taxa de entrega:{" "}
+          Entrega: {deliveryQuote.estimatedMinutes ?? "?"} min •{" "}
           {deliveryQuote.fee == null
             ? "a calcular"
             : deliveryQuote.isFree
@@ -2193,15 +2453,15 @@ function SavedAddresses({
     <section className="rounded-2xl border border-border bg-card p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="font-extrabold">Endereços salvos</h3>
-          <p className="text-xs text-muted-foreground">Você pode salvar até 5 endereços.</p>
+          <h3 className="font-extrabold">Entregar em</h3>
+          <p className="text-xs text-muted-foreground">Escolha um endereço salvo.</p>
         </div>
         <button
           type="button"
           onClick={onNew}
-          className="rounded-lg bg-secondary px-3 py-2 text-xs font-bold"
+          className="rounded-lg bg-secondary px-3 py-2 text-xs font-bold text-muted-foreground"
         >
-          Novo endereço
+          Outro endereço
         </button>
       </div>
 
@@ -2221,35 +2481,30 @@ function SavedAddresses({
                   {address.label}
                   {address.isDefault ? " · Principal" : ""}
                 </p>
-                <span className="text-xs font-bold text-primary">Usar este endereço</span>
+                <span className="text-xs font-bold text-primary">
+                  {selectedAddressId === address.id ? "Selecionado" : "Selecionar"}
+                </span>
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {address.street}, {address.number} · {address.neighborhood}
+                {address.street}, {address.number} - {address.neighborhood}
               </p>
+              {address.deliveryFeeSnapshot != null ? (
+                <p className="mt-1 text-sm font-semibold text-primary">
+                  Taxa de entrega: {formatPrice(address.deliveryFeeSnapshot)}
+                </p>
+              ) : (
+                <p className="mt-1 text-sm font-semibold text-amber-600">
+                  Região de entrega não identificada
+                </p>
+              )}
             </button>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => onEdit(address)}
-                className="rounded-md bg-secondary px-2.5 py-1 text-xs font-bold"
+                className="rounded-md bg-secondary px-2.5 py-1 text-xs font-bold text-muted-foreground"
               >
                 Editar
-              </button>
-              {!address.isDefault && (
-                <button
-                  type="button"
-                  onClick={() => onDefault(address.id)}
-                  className="rounded-md bg-secondary px-2.5 py-1 text-xs font-bold"
-                >
-                  Principal
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => onDelete(address.id)}
-                className="rounded-md bg-secondary px-2.5 py-1 text-xs font-bold"
-              >
-                Excluir
               </button>
             </div>
           </div>
@@ -2326,145 +2581,89 @@ function ConsentCheckbox({
 }
 
 function calculateDeliveryQuote({
-  subtotal,
+  subtotal: _subtotal,
   unit,
   distanceKm,
   rules,
-  neighborhood,
+  deliveryZone,
+  neighborhood: _neighborhood,
   locationSource,
 }: {
   subtotal: number;
   unit: GeoUnit | null;
   distanceKm: number | null;
   rules: DeliveryRuleQuote[];
+  deliveryZone?: DeliveryZone | null;
   neighborhood: string;
   locationSource: DeliveryLocationSource;
 }): DeliveryQuote {
   const minimumOrderValue = unit?.minimumOrderValue ?? 0;
-  const maxDistanceKm = unit?.maxDeliveryDistanceKm ?? 0;
 
   if (!unit) {
     return {
       fee: null,
-      distanceKm,
+      distanceKm: null,
       deliveryRangeId: null,
       estimatedMinutes: null,
       minimumOrderValue,
-      maxDistanceKm,
+      maxDistanceKm: 0,
       isFree: false,
       method: "blocked",
-      blockedReason:
-        locationSource === "manual_unavailable"
-          ? "Confirme o local da entrega pelo GPS ou marque no mapa."
-          : "No momento não há unidade disponível para delivery.",
+      blockedReason: "Não conseguimos carregar a loja agora. Atualize a página e tente novamente.",
     };
   }
 
   if (!unit.isOpen) {
     return {
       fee: null,
-      distanceKm,
+      distanceKm: null,
       deliveryRangeId: null,
       estimatedMinutes: null,
       minimumOrderValue,
-      maxDistanceKm,
+      maxDistanceKm: 0,
       isFree: false,
       method: "blocked",
       blockedReason: "A unidade mais próxima está fechada no momento.",
     };
   }
 
-  if (distanceKm != null && maxDistanceKm > 0 && distanceKm > maxDistanceKm) {
+  if (!deliveryZone) {
     return {
       fee: null,
-      distanceKm,
+      distanceKm: null,
       deliveryRangeId: null,
       estimatedMinutes: null,
       minimumOrderValue,
-      maxDistanceKm,
+      maxDistanceKm: 0,
       isFree: false,
       method: "blocked",
-      blockedReason: "Este endereço está fora da área de entrega.",
+      blockedReason: NO_ZONE_MESSAGE,
     };
   }
 
-  const freeDeliveryFrom = unit.freeDeliveryFrom ?? 0;
-  const distanceMethod = locationSource === "gps" ? "gps" : "manual_pin";
-  const activeRules = [...rules]
-    .filter((rule) => rule.isActive !== false)
-    .sort((a, b) => a.maxDistanceKm - b.maxDistanceKm);
-  const matchedRule =
-    distanceKm == null ? null : activeRules.find((rule) => rule.maxDistanceKm >= distanceKm);
-
-  if (distanceKm != null && activeRules.length > 0) {
-    if (!matchedRule) {
-      return {
-        fee: null,
-        distanceKm,
-        deliveryRangeId: null,
-        estimatedMinutes: null,
-        minimumOrderValue,
-        maxDistanceKm,
-        isFree: false,
-        method: "blocked",
-        blockedReason: "Este endereço está fora da área de entrega.",
-      };
-    }
-
+  if (!deliveryZone.isActive) {
     return {
-      fee: matchedRule.deliveryFee,
-      distanceKm,
-      deliveryRangeId: matchedRule.id,
-      estimatedMinutes: matchedRule.estimatedMinutes,
-      minimumOrderValue,
-      maxDistanceKm,
-      isFree: matchedRule.deliveryFee === 0,
-      method: distanceMethod,
-    };
-  }
-
-  if (distanceKm != null && freeDeliveryFrom > 0 && subtotal >= freeDeliveryFrom) {
-    return {
-      fee: 0,
-      distanceKm,
+      fee: null,
+      distanceKm: null,
       deliveryRangeId: null,
       estimatedMinutes: null,
       minimumOrderValue,
-      maxDistanceKm,
-      isFree: true,
-      method: distanceMethod,
+      maxDistanceKm: 0,
+      isFree: false,
+      method: "blocked",
+      blockedReason: "Esta região está temporariamente indisponível para entrega.",
     };
-  }
-
-  if (distanceKm != null) {
-    const baseFee = unit.baseDeliveryFee ?? 0;
-    const perKm = unit.deliveryFeePerKm ?? 0;
-    if (baseFee > 0 || perKm > 0) {
-      return {
-        fee: Number((baseFee + distanceKm * perKm).toFixed(2)),
-        distanceKm,
-        deliveryRangeId: null,
-        estimatedMinutes: null,
-        minimumOrderValue,
-        maxDistanceKm,
-        isFree: false,
-        method: distanceMethod,
-      };
-    }
   }
 
   return {
-    fee: null,
-    distanceKm,
+    fee: deliveryZone.fee,
+    distanceKm: null,
     deliveryRangeId: null,
-    estimatedMinutes: null,
+    estimatedMinutes: deliveryZone.estimatedTimeMax ?? deliveryZone.estimatedTimeMin ?? null,
     minimumOrderValue,
-    maxDistanceKm,
-    isFree: false,
-    method: "blocked",
-    blockedReason: neighborhood.trim()
-      ? "Confirme o local da entrega pelo GPS ou marque no mapa."
-      : "Confirme o local da entrega pelo GPS ou marque no mapa.",
+    maxDistanceKm: 0,
+    isFree: deliveryZone.fee === 0,
+    method: locationSource === "gps" ? "gps" : "manual_pin",
   };
 }
 

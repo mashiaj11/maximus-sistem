@@ -19,7 +19,12 @@ import {
   saveCustomer,
   saveSavedCustomerProfile,
 } from "@/lib/customer";
-import { createOrderInSupabase, findPublicTable, loadPublicMenu } from "@/lib/supabase-data";
+import {
+  createOrderInSupabase,
+  findPublicTable,
+  loadActivePublicUnit,
+  loadPublicMenu,
+} from "@/lib/supabase-data";
 import type { GeoUnit } from "@/lib/geo";
 
 interface CheckoutMesaSearch {
@@ -102,6 +107,12 @@ function CheckoutMesaPage() {
   const [changeFor, setChangeFor] = useState("");
   const [units, setUnits] = useState<GeoUnit[]>([]);
   const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null);
+  const requestedActiveUnit =
+    effectiveUnit && units.length
+      ? units.find((u) => u.slug === effectiveUnit || u.id === effectiveUnit)
+      : null;
+  const activeUnit = requestedActiveUnit ?? units[0] ?? null;
+  const resolvedUnitSlug = activeUnit?.slug ?? activeUnit?.id ?? effectiveUnit;
   const allUnitsClosed = units.length > 0 && units.every((item) => !item.isOpen);
 
   // ── Bootstrap customer profile ──────────────────────────────────────────
@@ -140,10 +151,6 @@ function CheckoutMesaPage() {
 
   // ── Load units (to resolve unit id/slug for order submission) ───────────
   useEffect(() => {
-    if (!selectedUnitSlug) {
-      setUnits([]);
-      return;
-    }
     loadPublicMenu(selectedUnitSlug, "dine_in")
       .then((data) => setUnits(data.units))
       .catch(() => undefined);
@@ -164,26 +171,11 @@ function CheckoutMesaPage() {
     );
   }
 
-  if (!effectiveUnit) {
-    return (
-      <div className="min-h-screen">
-        <MesaCheckoutHeader table={displayMesa} />
-        <CheckoutShell title="Unidade não identificada">
-          <div className="space-y-4">
-            <p className="rounded-2xl border border-destructive/40 bg-destructive/10 p-4 text-sm font-semibold text-destructive">
-              Unidade não identificada. Escaneie novamente o QR Code da mesa.
-            </p>
-          </div>
-        </CheckoutShell>
-      </div>
-    );
-  }
-
   // ── Empty cart guard ─────────────────────────────────────────────────────
   if (items.length === 0) {
     return (
       <div className="min-h-screen">
-        <MesaCheckoutHeader unit={effectiveUnit} table={displayMesa} />
+        <MesaCheckoutHeader unit={resolvedUnitSlug} table={displayMesa} />
         <CheckoutShell title="Meu pedido está vazio">
           <Button
             className="w-full bg-gradient-primary font-bold"
@@ -192,6 +184,7 @@ function CheckoutMesaPage() {
                 to: "/mesa",
                 search: {
                   ...(effectiveUnit ? { unit: effectiveUnit } : {}),
+                  ...(!effectiveUnit && resolvedUnitSlug ? { unit: resolvedUnitSlug } : {}),
                   ...(effectiveTable ? { table: effectiveTable } : {}),
                 },
               })
@@ -207,7 +200,7 @@ function CheckoutMesaPage() {
   if (allUnitsClosed) {
     return (
       <div className="min-h-screen">
-        <MesaCheckoutHeader unit={effectiveUnit} table={displayMesa} />
+        <MesaCheckoutHeader unit={resolvedUnitSlug} table={displayMesa} />
         <CheckoutShell title="Estamos fechados agora">
           <div className="space-y-4">
             <p className="rounded-2xl border border-primary/30 bg-primary/10 p-4 text-sm font-semibold text-muted-foreground">
@@ -260,7 +253,7 @@ function CheckoutMesaPage() {
     try {
       const customer = await persistCustomer();
 
-      const unit = units.find((u) => u.slug === selectedUnitSlug || u.id === selectedUnitSlug);
+      const unit = activeUnit ?? (await loadActivePublicUnit(selectedUnitSlug));
 
       if (!unit) {
         toast.error("Não foi possível identificar a unidade do pedido.");
@@ -385,7 +378,7 @@ function CheckoutMesaPage() {
   if (submittedOrderId) {
     return (
       <div className="min-h-screen">
-        <MesaCheckoutHeader unit={effectiveUnit} table={displayMesa} />
+        <MesaCheckoutHeader unit={resolvedUnitSlug} table={displayMesa} />
         <CheckoutShell title="Pedido enviado">
           <div className="space-y-4">
             <section className="rounded-2xl border border-primary/30 bg-primary/10 p-5 text-sm">
@@ -400,7 +393,7 @@ function CheckoutMesaPage() {
                 navigate({
                   to: "/mesa",
                   search: {
-                    ...(effectiveUnit ? { unit: effectiveUnit } : {}),
+                    ...(resolvedUnitSlug ? { unit: resolvedUnitSlug } : {}),
                     ...(effectiveTable ? { table: effectiveTable } : {}),
                   },
                 })
@@ -416,7 +409,7 @@ function CheckoutMesaPage() {
 
   return (
     <div className="min-h-screen">
-      <MesaCheckoutHeader unit={effectiveUnit} table={displayMesa} />
+      <MesaCheckoutHeader unit={resolvedUnitSlug} table={displayMesa} />
 
       {/* Order summary bar */}
       <div className="mx-auto max-w-lg px-4 pt-6">
@@ -432,7 +425,7 @@ function CheckoutMesaPage() {
       {step === "choice" && (
         <CheckoutShell
           title={`Pedido — Mesa ${displayMesa}`}
-          subtitle={`Unidade: ${selectedUnitSlug}`}
+          subtitle={`Unidade: ${activeUnit?.name ?? resolvedUnitSlug ?? "ativa"}`}
         >
           <div className="space-y-4">
             <p className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-sm font-bold text-primary">

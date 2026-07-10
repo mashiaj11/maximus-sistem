@@ -13,7 +13,6 @@ import {
   getRememberedLastOrderId,
 } from "@/lib/supabase-data";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
-import { getDistanceKm } from "@/lib/geo";
 
 export const Route = createFileRoute("/acompanhar")({
   head: () => ({
@@ -76,16 +75,6 @@ export function TrackPageContent({ orderId: routeOrderId }: { orderId?: string }
         steps.findIndex((step) => step.key === normalizeStatus(order.status)),
       )
     : 0;
-  const remainingDistanceKm =
-    order?.mode === "delivery" &&
-    order.driverLat != null &&
-    order.driverLng != null &&
-    order.deliveryLat != null &&
-    order.deliveryLng != null
-      ? getDistanceKm(order.driverLat, order.driverLng, order.deliveryLat, order.deliveryLng)
-      : null;
-  const etaMinutes =
-    remainingDistanceKm == null ? null : Math.max(3, Math.round((remainingDistanceKm / 25) * 60));
   const normalizedStatus = normalizeStatus(order?.status);
   const isFinished = ["delivered", "picked_up", "delivered_to_table"].includes(normalizedStatus);
   const isCancelled = normalizedStatus === "cancelled";
@@ -207,30 +196,15 @@ export function TrackPageContent({ orderId: routeOrderId }: { orderId?: string }
                           : "Calculando"
                       }
                     />
+                    <InfoRow
+                      label="Tempo estimado"
+                      value={
+                        order.deliveryEstimatedTime != null
+                          ? `${order.deliveryEstimatedTime} min`
+                          : "Calculando"
+                      }
+                    />
                     <InfoRow label="Taxa de entrega" value={formatPrice(order.deliveryFee ?? 0)} />
-                    <InfoRow
-                      label="Entregador"
-                      value={
-                        normalizeStatus(order.status) === "out_for_delivery" ||
-                        normalizeStatus(order.status) === "driver_on_way" ||
-                        normalizeStatus(order.status) === "driver_nearby"
-                          ? "Saiu para entrega"
-                          : "Aguardando saída"
-                      }
-                    />
-                    <InfoRow
-                      label="Distância restante"
-                      value={
-                        remainingDistanceKm != null
-                          ? remainingDistanceKm < 1
-                            ? `${Math.round(remainingDistanceKm * 1000)} m`
-                            : `${remainingDistanceKm.toFixed(1)} km`
-                          : "Aguardando GPS do entregador"
-                      }
-                    />
-                    {etaMinutes != null && (
-                      <InfoRow label="Previsão simples" value={`aprox. ${etaMinutes} min`} />
-                    )}
                   </>
                 )}
                 <InfoRow label="Pagamento" value={paymentStatusLabel(order.paymentStatus)} />
@@ -323,10 +297,10 @@ function normalizeStatus(status?: string) {
     pronto_retirada: "ready_for_pickup",
     out_for_delivery: "out_for_delivery",
     saiu_entrega: "out_for_delivery",
-    driver_on_way: "driver_on_way",
-    a_caminho: "driver_on_way",
-    driver_nearby: "driver_nearby",
-    perto_500m: "driver_nearby",
+    driver_on_way: "arrived",
+    a_caminho: "arrived",
+    driver_nearby: "arrived",
+    perto_500m: "arrived",
     arrived: "arrived",
     chegou: "arrived",
     delivered: "delivered",
@@ -350,8 +324,6 @@ function currentLabel(status?: string) {
     ready: "Pedido pronto",
     ready_for_pickup: "Pronto para retirada",
     out_for_delivery: "Saiu para entrega",
-    driver_on_way: "Entregador a caminho",
-    driver_nearby: "Entregador a 500 metros",
     arrived: "Pedido chegou",
     delivered: "Entregue",
     delivered_to_table: "Entregue na mesa",

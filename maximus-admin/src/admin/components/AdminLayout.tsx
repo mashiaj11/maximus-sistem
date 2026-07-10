@@ -10,6 +10,7 @@ import {
   Truck,
   MapPinned,
   LogOut,
+  Printer,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -30,6 +31,7 @@ const NAV = [
   { to: "/admin/mesas", label: "Mesas", icon: Grid3x3 },
   { to: "/admin/entregadores", label: "Entregadores", icon: Truck },
   { to: "/admin/entrega", label: "Entrega", icon: MapPinned },
+  { to: "/admin/impressao", label: "Impressão", icon: Printer },
   { to: "/admin/configuracoes", label: "Configurações", icon: Settings },
 ];
 
@@ -101,36 +103,36 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
     return (
       <div className="admin-root min-h-screen font-sora">
         <main className="flex min-h-screen items-center justify-center p-4">
-          <section className="w-full max-w-3xl">
-            <div className="mb-8 text-center">
-              <LogoMark src={logoUrl} className="mx-auto h-16 w-16" />
-              <h1 className="mt-4 text-3xl font-black tracking-tight">Escolha a unidade</h1>
+          <section className="w-full max-w-2xl">
+            <div className="mb-5 text-center">
+              <LogoMark src={logoUrl} className="mx-auto h-12 w-12" />
+              <h1 className="mt-3 text-2xl font-black tracking-tight">Escolha a unidade</h1>
               <p className="mt-2 text-sm text-muted-foreground">
-                Selecione qual operação deseja gerenciar agora.
+                Selecione a operação.
               </p>
             </div>
 
             {isLoading ? (
-              <div className="rounded-xl border border-border bg-card p-8 text-center">
-                <p className="text-lg font-bold">Carregando unidades</p>
+              <div className="rounded-lg border border-border bg-card p-5 text-center">
+                <p className="text-base font-bold">Carregando unidades</p>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Buscando dados reais no Supabase.
+                  Buscando dados.
                 </p>
               </div>
             ) : dataError ? (
-              <div className="rounded-xl border border-destructive/30 bg-card p-8 text-center">
-                <p className="text-lg font-bold text-destructive">Erro ao carregar unidades</p>
+              <div className="rounded-lg border border-destructive/30 bg-card p-5 text-center">
+                <p className="text-base font-bold text-destructive">Erro ao carregar unidades</p>
                 <p className="mt-2 text-sm text-muted-foreground">{dataError}</p>
               </div>
             ) : selectableUnits.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center">
-                <p className="text-lg font-bold">Nenhuma unidade cadastrada</p>
+              <div className="rounded-lg border border-dashed border-border bg-card p-5 text-center">
+                <p className="text-base font-bold">Nenhuma unidade cadastrada</p>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Nenhuma unidade foi encontrada no Supabase.
+                  Sem unidades disponíveis.
                 </p>
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 {selectableUnits.map((unit) => (
                   <button
                     key={unit.id}
@@ -138,14 +140,14 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                       setPin("");
                       setPinUnit(unit);
                     }}
-                    className="group rounded-xl border border-border bg-card p-6 text-left shadow-sm transition-colors hover:border-primary/40 hover:bg-accent"
+                    className="group rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
                   >
-                    <p className="text-xs font-bold uppercase tracking-widest text-primary">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-primary">
                       {unit.isOpen ? "Aberta agora" : "Fechada"}
                     </p>
-                    <h2 className="mt-3 text-2xl font-black">{unit.name}</h2>
-                    <p className="mt-2 min-h-10 text-sm text-muted-foreground">{unit.address}</p>
-                    <span className="mt-6 inline-flex rounded-lg bg-primary px-4 py-2 text-sm font-extrabold text-primary-foreground group-hover:opacity-90">
+                    <h2 className="mt-2 text-lg font-black">{unit.name}</h2>
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{unit.address}</p>
+                    <span className="mt-4 inline-flex rounded-md bg-primary px-3 py-1.5 text-xs font-extrabold text-primary-foreground group-hover:opacity-90">
                       Entrar
                     </span>
                   </button>
@@ -156,7 +158,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
             {pinUnit && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
                 <form
-                  className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl"
+                  className="w-full max-w-sm rounded-lg border border-border bg-card p-5"
                   onSubmit={async (event) => {
                     event.preventDefault();
                     setCheckingPin(true);
@@ -167,10 +169,10 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                     }
                   }}
                 >
-                  <p className="text-xs font-bold uppercase tracking-widest text-primary">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-primary">
                     Acesso local
                   </p>
-                  <h2 className="mt-2 text-xl font-black">{pinUnit.name}</h2>
+                  <h2 className="mt-2 text-lg font-black">{pinUnit.name}</h2>
                   <label className="mt-5 block text-sm font-semibold" htmlFor="admin-pin">
                     Senha numérica
                   </label>
@@ -202,10 +204,6 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                       {checkingPin ? "Validando..." : "Liberar painel"}
                     </button>
                   </div>
-                  <p className="mt-4 text-xs text-muted-foreground">
-                    A sessão é salva apenas neste navegador para teste local. Depois isso vira
-                    Auth/RBAC no Supabase.
-                  </p>
                 </form>
               </div>
             )}
@@ -222,24 +220,24 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
       <div className="flex min-h-screen">
         {/* Sidebar */}
         <aside
-          className={`sticky top-0 hidden h-screen flex-col border-r border-border bg-card shadow-sm transition-[width] duration-200 ease-out md:flex ${
-            isSidebarCollapsed ? "w-20" : "w-64"
+          className={`sticky top-0 hidden h-screen flex-col border-r border-border bg-[#18191b] text-white transition-[width] duration-200 ease-out md:flex ${
+            isSidebarCollapsed ? "w-16" : "w-56"
           }`}
         >
           <TooltipProvider delayDuration={150}>
-            <div className={`border-b border-border py-4 ${isSidebarCollapsed ? "px-3" : "px-5"}`}>
+            <div className={`border-b border-white/10 py-3 ${isSidebarCollapsed ? "px-2" : "px-3"}`}>
               <div
                 className={`flex items-center gap-3 ${
                   isSidebarCollapsed ? "justify-center" : "justify-between"
                 }`}
               >
-                <LogoMark src={logoUrl} className={isSidebarCollapsed ? "h-9 w-9" : "h-14 w-14"} />
+                <LogoMark src={logoUrl} className={isSidebarCollapsed ? "h-8 w-8" : "h-10 w-10"} />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
                       onClick={() => setIsSidebarCollapsed((current) => !current)}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/5 text-white/65 transition-colors hover:bg-white/10 hover:text-white"
                       aria-label={isSidebarCollapsed ? "Expandir sidebar" : "Recolher sidebar"}
                     >
                       {isSidebarCollapsed ? (
@@ -257,21 +255,21 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
               {!isSidebarCollapsed && (
                 <div className="mt-3 flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-extrabold">{selectedUnit.name}</p>
-                    <p className="text-[11px] uppercase tracking-widest text-muted-foreground">
+                    <p className="truncate text-sm font-extrabold text-white">{selectedUnit.name}</p>
+                    <p className="text-[10px] uppercase tracking-wide text-white/45">
                       Unidade atual
                     </p>
                   </div>
                   <button
                     onClick={clearSelectedUnit}
-                    className="shrink-0 rounded-md bg-secondary px-2.5 py-1 text-xs font-bold hover:bg-accent"
+                    className="shrink-0 rounded-md bg-white/5 px-2 py-1 text-[11px] font-bold text-white/80 hover:bg-white/10"
                   >
                     Trocar
                   </button>
                 </div>
               )}
             </div>
-            <nav className={`flex-1 space-y-1 ${isSidebarCollapsed ? "p-3" : "p-3"}`}>
+            <nav className={`flex-1 space-y-0.5 ${isSidebarCollapsed ? "p-2" : "p-2.5"}`}>
               {NAV.map(({ to, label, icon: Icon, exact }) => {
                 const count = navCount(to);
 
@@ -281,19 +279,19 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                       <Link
                         to={to}
                         aria-label={label}
-                        className={`relative flex items-center rounded-lg text-sm font-medium transition-colors ${
-                          isSidebarCollapsed ? "h-11 justify-center px-0" : "gap-3 px-3 py-2.5"
+                        className={`relative flex items-center rounded-md text-xs font-semibold transition-colors ${
+                          isSidebarCollapsed ? "h-10 justify-center px-0" : "gap-2.5 px-2.5 py-2"
                         } ${
                           isActive(to, exact)
                             ? "bg-primary text-primary-foreground"
-                            : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                            : "text-white/68 hover:bg-white/7 hover:text-white"
                         }`}
                       >
-                        <Icon className="h-[18px] w-[18px] shrink-0" />
+                        <Icon className="h-4 w-4 shrink-0" />
                         {!isSidebarCollapsed && <span className="flex-1 truncate">{label}</span>}
                         {count != null && (
                           <span
-                            className={`rounded-md bg-background/70 text-xs font-bold text-foreground ${
+                            className={`rounded-md bg-black/25 text-xs font-bold text-white ${
                               isSidebarCollapsed
                                 ? "absolute right-1 top-1 min-w-5 px-1 py-0 text-center text-[10px]"
                                 : "px-2 py-0.5"
@@ -310,19 +308,19 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
               })}
             </nav>
             <div
-              className={`border-t border-border text-[11px] text-muted-foreground ${
-                isSidebarCollapsed ? "p-3" : "p-4"
+              className={`border-t border-white/10 text-[11px] text-white/55 ${
+                isSidebarCollapsed ? "p-2" : "p-3"
               }`}
             >
               {!isSidebarCollapsed && (
                 <>
                   <div className="mb-3 min-w-0">
-                    <p className="truncate font-bold text-foreground">{profile?.fullName}</p>
-                    <p className="uppercase tracking-widest">{profile?.role}</p>
+                    <p className="truncate font-bold text-white">{profile?.fullName}</p>
+                    <p className="uppercase tracking-wide">{profile?.role}</p>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Pix pendentes</span>
-                    <span className="rounded-md bg-primary/15 px-2 py-0.5 font-bold text-primary">
+                    <span className="rounded-md bg-primary/20 px-2 py-0.5 font-bold text-primary">
                       {pendingPayments}
                     </span>
                   </div>
@@ -345,7 +343,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                   <button
                     type="button"
                     onClick={() => void signOut()}
-                    className={`flex items-center justify-center rounded-md bg-secondary text-xs font-bold text-foreground hover:bg-accent ${
+                    className={`flex items-center justify-center rounded-md bg-white/5 text-xs font-bold text-white/85 hover:bg-white/10 ${
                       isSidebarCollapsed ? "h-10 w-full p-0" : "mt-3 w-full gap-2 px-3 py-2"
                     }`}
                     aria-label="Sair"
@@ -406,7 +404,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
           </nav>
           <main
             className={`flex-1 w-full ${
-              isPedidosArea ? "p-3 md:p-4 xl:p-5" : "mx-auto max-w-[1400px] p-4 md:p-8"
+              isPedidosArea ? "p-3 md:p-4" : "mx-auto max-w-[1440px] p-3 md:p-5"
             }`}
           >
             {children}
@@ -427,10 +425,10 @@ export function PageHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
       <div>
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight">{title}</h1>
-        {subtitle && <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>}
+        <h1 className="text-xl font-extrabold tracking-tight md:text-2xl">{title}</h1>
+        {subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>}
       </div>
       {action}
     </div>

@@ -22,16 +22,16 @@ function StatCard({
 }) {
   const toneClasses = getFinancialTone(tone === "positive" ? 1 : tone === "negative" ? -1 : tone);
   return (
-    <div className={`rounded-xl border bg-card p-5 shadow-sm ${toneClasses.border}`}>
+    <div className={`rounded-lg border bg-card p-3 ${toneClasses.border}`}>
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{label}</p>
+        <p className="text-xs font-bold text-muted-foreground">{label}</p>
         <span
-          className={`flex h-10 w-10 items-center justify-center rounded-full border ${toneClasses.chip}`}
+          className={`flex h-8 w-8 items-center justify-center rounded-md border ${toneClasses.chip}`}
         >
-          <Icon className="h-5 w-5" />
+          <Icon className="h-4 w-4" />
         </span>
       </div>
-      <p className={`mt-3 text-2xl font-bold tracking-tight ${toneClasses.text}`}>{value}</p>
+      <p className={`mt-2 text-xl font-extrabold tracking-tight ${toneClasses.text}`}>{value}</p>
     </div>
   );
 }
@@ -72,7 +72,7 @@ function DashboardPage() {
     <div>
       <PageHeader
         title="Dashboard"
-        subtitle={`Visão geral do período · ${selectedUnit?.name ?? "Unidade"}`}
+        subtitle={selectedUnit?.name ?? "Unidade"}
       />
 
       <PeriodFilter
@@ -84,7 +84,7 @@ function DashboardPage() {
         onCustomEndChange={setCustomEnd}
       />
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Vendas do dia"
           value={formatBRL(stats.salesToday)}
@@ -133,7 +133,7 @@ function DashboardPage() {
         />
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <DonutPanel
           title="Entregadores"
           rows={courierRanking.map((driver) => ({
@@ -204,8 +204,8 @@ function DashboardPage() {
           empty="Sem status de pagamento."
         />
 
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-          <h2 className="mb-4 text-lg font-semibold">Acesso rápido</h2>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h2 className="mb-3 text-sm font-extrabold">Acesso rápido</h2>
           <div className="grid grid-cols-2 gap-3">
             <QuickLink to="/admin/pedidos" label="Ver pedidos" />
             <QuickLink to="/admin/cardapio" label="Cardápio" />
@@ -252,11 +252,11 @@ function DonutPanel({ title, rows, empty }: { title: string; rows: DonutRow[]; e
   let offset = 0;
 
   return (
-    <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-      <h2 className="mb-4 text-lg font-semibold">{title}</h2>
+    <div className="rounded-lg border border-border bg-card p-4">
+      <h2 className="mb-3 text-sm font-extrabold">{title}</h2>
       {normalizedRows.length ? (
-        <div className="grid items-center gap-5 sm:grid-cols-[180px_1fr]">
-          <div className="relative mx-auto aspect-square w-44">
+        <div className="grid items-center gap-4 sm:grid-cols-[140px_1fr]">
+          <div className="relative mx-auto aspect-square w-32">
             <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90" aria-hidden="true">
               <circle
                 cx="60"
@@ -290,7 +290,7 @@ function DonutPanel({ title, rows, empty }: { title: string; rows: DonutRow[]; e
             <div className="absolute inset-0 grid place-items-center text-center">
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground">Total</p>
-                <p className="text-xl font-black">{formatChartTotal(normalizedRows, total)}</p>
+                <p className="text-lg font-black">{formatChartTotal(normalizedRows, total)}</p>
               </div>
             </div>
           </div>
@@ -378,13 +378,13 @@ function PeriodFilter({
   onCustomEndChange: (value: string) => void;
 }) {
   return (
-    <div className="mb-5 rounded-xl border border-border bg-card p-4">
+    <div className="mb-4 rounded-lg border border-border bg-card p-3">
       <div className="flex flex-wrap gap-2">
         {(Object.keys(PERIOD_LABELS) as PeriodKey[]).map((key) => (
           <button
             key={key}
             onClick={() => onPeriodChange(key)}
-            className={`rounded-lg px-3 py-2 text-xs font-bold ${
+            className={`rounded-md px-2.5 py-1.5 text-xs font-bold ${
               period === key ? "bg-primary text-primary-foreground" : "bg-secondary"
             }`}
           >

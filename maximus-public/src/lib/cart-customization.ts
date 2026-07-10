@@ -10,11 +10,7 @@ export function getDefaultSelections(product: Product): SelectedOptions {
   const selections: SelectedOptions = {};
 
   for (const group of product.optionGroups ?? []) {
-    if (group.type === "single" && group.required && group.options[0]) {
-      selections[group.id] = [group.options[0].id];
-    } else {
-      selections[group.id] = [];
-    }
+    selections[group.id] = [];
   }
 
   return selections;
@@ -51,13 +47,10 @@ export function calculateUnitPrice(product: Product, selections: SelectedOptions
 export function getSelectionErrors(product: Product, selections: SelectedOptions): string[] {
   return (product.optionGroups ?? []).flatMap((group) => {
     const count = selections[group.id]?.length ?? 0;
-    const min = group.required ? (group.min ?? 1) : (group.min ?? 0);
+    const min = group.required || group.decisionRequired ? Math.max(group.min ?? 1, 1) : (group.min ?? 0);
 
     if (count < min) {
-      if (group.id === "acompanhamentos") {
-        return [`Escolha pelo menos ${min} acompanhamento para continuar.`];
-      }
-      return [`Escolha pelo menos ${min} opção em ${group.title} para continuar.`];
+      return [`Escolha uma opção em ${group.title} para continuar.`];
     }
     if (group.max && count > group.max)
       return [`Selecione no máximo ${group.max} em ${group.title}.`];

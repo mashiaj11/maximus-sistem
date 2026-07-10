@@ -196,7 +196,7 @@ function CardapioPage() {
     <div>
       <PageHeader
         title="Cardápio"
-        subtitle={`Categorias, produtos e acompanhamentos · ${selectedUnit?.name ?? "Unidade"}`}
+        subtitle={selectedUnit?.name ?? "Unidade"}
         action={
           <form
             className="flex gap-2"
@@ -232,9 +232,9 @@ function CardapioPage() {
           return (
             <section
               key={category.id}
-              className={`rounded-xl border border-border bg-card p-5 ${active ? "" : "opacity-75"}`}
+              className={`rounded-lg border border-border bg-card p-4 ${active ? "" : "opacity-75"}`}
             >
-              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                 {isEditingCategory ? (
                   <div className="grid flex-1 gap-2 sm:grid-cols-[1fr_120px_auto]">
                     <input
@@ -301,7 +301,7 @@ function CardapioPage() {
                   <>
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-xl font-black">{category.name}</h2>
+                        <h2 className="text-lg font-black">{category.name}</h2>
                         <span className="rounded-md bg-secondary px-2 py-1 text-xs font-bold text-muted-foreground">
                           #{category.order}
                         </span>
@@ -320,7 +320,7 @@ function CardapioPage() {
                           </span>
                         )}
                       </div>
-                      <p className="mt-1 text-sm text-muted-foreground">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {availableCount} de {categoryProducts.length} produtos disponíveis em{" "}
                         {selectedUnit?.name ?? "unidade"}
                       </p>
@@ -362,11 +362,11 @@ function CardapioPage() {
                   return (
                     <div
                       key={product.id}
-                      className={`grid gap-3 rounded-lg border border-border bg-background p-3 md:grid-cols-[84px_1fr_auto] md:items-center ${
+                      className={`grid gap-3 rounded-md border border-border bg-background p-2.5 md:grid-cols-[72px_1fr_auto] md:items-center ${
                         available ? "" : "opacity-65"
                       }`}
                     >
-                      <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-lg border border-border bg-secondary text-center text-xs text-muted-foreground">
+                      <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-md border border-border bg-secondary text-center text-xs text-muted-foreground">
                         {product.imageUrl ? (
                           <img
                             src={product.imageUrl}
@@ -447,7 +447,7 @@ function CardapioPage() {
 
                 <button
                   onClick={() => setCreatingProduct(emptyProduct(category.id))}
-                  className="inline-flex items-center gap-2 rounded-lg border border-dashed border-border bg-background px-4 py-3 text-sm font-extrabold text-primary hover:border-primary/50"
+                  className="inline-flex items-center gap-2 rounded-md border border-dashed border-border bg-background px-3 py-2 text-xs font-extrabold text-primary hover:border-primary/50"
                 >
                   <Plus className="h-4 w-4" />
                   Adicionar produto em {category.name}
@@ -842,6 +842,9 @@ function ProductEditor({
                       required: true,
                       minChoices: 1,
                       maxChoices: 3,
+                      decisionRequired: false,
+                      active: true,
+                      sortOrder: (prev.optionGroups ?? []).length,
                       choices: [],
                     },
                   ],
@@ -876,7 +879,7 @@ function ProductEditor({
                   Remover
                 </button>
               </div>
-              <div className="grid gap-2 sm:grid-cols-4">
+              <div className="grid gap-2 sm:grid-cols-5">
                 <select
                   aria-label="Tipo de grupo"
                   value={group.type}
@@ -899,6 +902,23 @@ function ProductEditor({
                   />
                   Obrigatório
                 </label>
+                <label className="flex items-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-xs font-bold">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(group.decisionRequired)}
+                    onChange={(event) =>
+                      updateGroup(group.id, {
+                        decisionRequired: event.target.checked,
+                        required: event.target.checked ? true : group.required,
+                        minChoices: event.target.checked
+                          ? Math.max(group.minChoices || 1, 1)
+                          : group.minChoices,
+                      })
+                    }
+                    className="accent-primary"
+                  />
+                  Decisão obrigatória
+                </label>
                 <input
                   type="number"
                   min="0"
@@ -920,10 +940,19 @@ function ProductEditor({
                   placeholder="Máx."
                 />
               </div>
+              {group.decisionRequired &&
+                !group.choices.some((choice) => choice.active && choice.isNegativeChoice) && (
+                  <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-500">
+                    Adicione ou marque uma opção negativa, exemplo: Não quero molhos.
+                  </p>
+                )}
 
               <div className="space-y-2">
                 {group.choices.map((choice) => (
-                  <div key={choice.id} className="grid gap-2 sm:grid-cols-[1fr_110px_90px]">
+                  <div
+                    key={choice.id}
+                    className="grid gap-2 sm:grid-cols-[1fr_110px_110px_90px]"
+                  >
                     <input
                       value={choice.name}
                       onChange={(event) =>
@@ -969,6 +998,23 @@ function ProductEditor({
                     >
                       {choice.active ? "Ativa" : "Inativa"}
                     </button>
+                    <label className="flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-xs font-bold">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(choice.isNegativeChoice)}
+                        onChange={(event) =>
+                          updateGroup(group.id, {
+                            choices: group.choices.map((item) =>
+                              item.id === choice.id
+                                ? { ...item, isNegativeChoice: event.target.checked }
+                                : item,
+                            ),
+                          })
+                        }
+                        className="accent-primary"
+                      />
+                      Não quero
+                    </label>
                   </div>
                 ))}
                 <button
@@ -981,6 +1027,9 @@ function ProductEditor({
                           name: "Nova opção",
                           priceDelta: 0,
                           active: true,
+                          isNegativeChoice: false,
+                          maxQuantity: 1,
+                          sortOrder: group.choices.length,
                         },
                       ],
                     })

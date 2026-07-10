@@ -18,6 +18,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as EntregaDriverIdRouteImport } from './routes/entrega.$driverId'
 import { Route as AdminMesasRouteImport } from './routes/admin.mesas'
+import { Route as AdminImpressaoRouteImport } from './routes/admin.impressao'
 import { Route as AdminFinalizadosRouteImport } from './routes/admin.finalizados'
 import { Route as AdminEntregadoresRouteImport } from './routes/admin.entregadores'
 import { Route as AdminEntregaRouteImport } from './routes/admin.entrega'
@@ -71,6 +72,11 @@ const AdminMesasRoute = AdminMesasRouteImport.update({
   path: '/mesas',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminImpressaoRoute = AdminImpressaoRouteImport.update({
+  id: '/impressao',
+  path: '/impressao',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminFinalizadosRoute = AdminFinalizadosRouteImport.update({
   id: '/finalizados',
   path: '/finalizados',
@@ -119,6 +125,7 @@ export interface FileRoutesByFullPath {
   '/admin/entrega': typeof AdminEntregaRoute
   '/admin/entregadores': typeof AdminEntregadoresRoute
   '/admin/finalizados': typeof AdminFinalizadosRoute
+  '/admin/impressao': typeof AdminImpressaoRoute
   '/admin/mesas': typeof AdminMesasRoute
   '/entrega/$driverId': typeof EntregaDriverIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByTo {
   '/admin/entrega': typeof AdminEntregaRoute
   '/admin/entregadores': typeof AdminEntregadoresRoute
   '/admin/finalizados': typeof AdminFinalizadosRoute
+  '/admin/impressao': typeof AdminImpressaoRoute
   '/admin/mesas': typeof AdminMesasRoute
   '/entrega/$driverId': typeof EntregaDriverIdRoute
   '/admin': typeof AdminIndexRoute
@@ -155,6 +163,7 @@ export interface FileRoutesById {
   '/admin/entrega': typeof AdminEntregaRoute
   '/admin/entregadores': typeof AdminEntregadoresRoute
   '/admin/finalizados': typeof AdminFinalizadosRoute
+  '/admin/impressao': typeof AdminImpressaoRoute
   '/admin/mesas': typeof AdminMesasRoute
   '/entrega/$driverId': typeof EntregaDriverIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -175,6 +184,7 @@ export interface FileRouteTypes {
     | '/admin/entrega'
     | '/admin/entregadores'
     | '/admin/finalizados'
+    | '/admin/impressao'
     | '/admin/mesas'
     | '/entrega/$driverId'
     | '/admin/'
@@ -192,6 +202,7 @@ export interface FileRouteTypes {
     | '/admin/entrega'
     | '/admin/entregadores'
     | '/admin/finalizados'
+    | '/admin/impressao'
     | '/admin/mesas'
     | '/entrega/$driverId'
     | '/admin'
@@ -210,6 +221,7 @@ export interface FileRouteTypes {
     | '/admin/entrega'
     | '/admin/entregadores'
     | '/admin/finalizados'
+    | '/admin/impressao'
     | '/admin/mesas'
     | '/entrega/$driverId'
     | '/admin/'
@@ -292,6 +304,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminMesasRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/impressao': {
+      id: '/admin/impressao'
+      path: '/impressao'
+      fullPath: '/admin/impressao'
+      preLoaderRoute: typeof AdminImpressaoRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/finalizados': {
       id: '/admin/finalizados'
       path: '/finalizados'
@@ -350,6 +369,7 @@ interface AdminRouteChildren {
   AdminEntregaRoute: typeof AdminEntregaRoute
   AdminEntregadoresRoute: typeof AdminEntregadoresRoute
   AdminFinalizadosRoute: typeof AdminFinalizadosRoute
+  AdminImpressaoRoute: typeof AdminImpressaoRoute
   AdminMesasRoute: typeof AdminMesasRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminPedidosIdRoute: typeof AdminPedidosIdRoute
@@ -362,6 +382,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminEntregaRoute: AdminEntregaRoute,
   AdminEntregadoresRoute: AdminEntregadoresRoute,
   AdminFinalizadosRoute: AdminFinalizadosRoute,
+  AdminImpressaoRoute: AdminImpressaoRoute,
   AdminMesasRoute: AdminMesasRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminPedidosIdRoute: AdminPedidosIdRoute,
