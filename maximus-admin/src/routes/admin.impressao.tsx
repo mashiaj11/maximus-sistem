@@ -132,6 +132,7 @@ function ImpressaoPage() {
   const printerBridge = typeof window !== "undefined" ? window.maximusPrinter : undefined;
   const desktopBridge = typeof window !== "undefined" ? window.maximusDesktop : undefined;
   const isDesktop = Boolean(desktopBridge?.isElectron);
+  const canListPrinters = Boolean(printerBridge?.listPrinters ?? desktopBridge?.listPrinters);
 
   useEffect(() => {
     if (!unitId) return;
@@ -174,11 +175,15 @@ function ImpressaoPage() {
   );
 
   async function refreshPrinters() {
-    if (!printerBridge) return;
+    const listPrinters = printerBridge?.listPrinters ?? desktopBridge?.listPrinters;
+    if (!listPrinters) {
+      setFeedback("A ponte de impressão do app Windows não está disponível. Reinicie o aplicativo.");
+      return;
+    }
     setLoadingPrinters(true);
     setFeedback("Buscando impressoras...");
     try {
-      const result = await printerBridge.listPrinters();
+      const result = await listPrinters();
       if (!result.ok) throw new Error(result.error ?? "Falha ao buscar impressoras.");
       setDetectedPrinters(result.printers ?? []);
       setFeedback("Impressoras atualizadas.");
@@ -201,14 +206,19 @@ function ImpressaoPage() {
   }
 
   async function testSectorPrinter(printer: MaximusPrinterConfig) {
-    if (!printerBridge || !printer.deviceName) return;
+    if (!printer.deviceName) return;
     const sector = SECTORS.find((item) => item.key === printer.destination);
     setFeedback(`Testando ${sector?.label ?? "setor"}...`);
-    const result = await printerBridge.testPrinter({
-      printerName: printer.deviceName,
-      sectorKey: printer.destination,
-      sectorName: sector?.label ?? printer.name,
-    });
+    const result = printerBridge?.testPrinter
+      ? await printerBridge.testPrinter({
+          printerName: printer.deviceName,
+          sectorKey: printer.destination,
+          sectorName: sector?.label ?? printer.name,
+        })
+      : await desktopBridge!.printTest({
+          ...printer,
+          html: `<html><body><main style="font-family:Arial;padding:8px"><h1>MAXIMUS</h1><p>Teste de impressão</p><p>Setor: ${sector?.label ?? printer.name}</p><p>Data/hora: ${new Date().toLocaleString("pt-BR")}</p><p>----------------</p></main></body></html>`,
+        });
     if (result.ok) {
       setFeedback("Teste enviado.");
       toast.success("Teste enviado.");
@@ -268,7 +278,7 @@ function ImpressaoPage() {
             </div>
             <button
               type="button"
-              disabled={!isDesktop || loadingPrinters}
+              disabled={!isDesktop || !canListPrinters || loadingPrinters}
               onClick={refreshPrinters}
               className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-xs font-extrabold text-primary-foreground disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
             >
