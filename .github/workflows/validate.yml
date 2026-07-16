@@ -1,0 +1,80 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "22.16.0"
+  VITE_SUPABASE_URL: "https://example.supabase.co"
+  VITE_SUPABASE_ANON_KEY: "placeholder-public-anon-key"
+
+jobs:
+  validate:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            maximus-admin/package-lock.json
+            maximus-public/package-lock.json
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          npm --prefix maximus-admin ci --legacy-peer-deps
+          npm --prefix maximus-public ci --legacy-peer-deps
+
+      - name: Required files and forbidden files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $required = @(
+            ".env.example",
+            "docker-compose.yml",
+            "setup-windows/INSTALAR-MAXIMUS.ps1",
+            "setup-windows/INICIAR-MAXIMUS.ps1",
+            ".github/workflows/build-windows.yml",
+            ".github/workflows/validate.yml"
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) { throw "Arquivo obrigatorio ausente: $file" }
+          }
+          $forbidden = git ls-files | Select-String -Pattern '(^|/)\.env$|\.env\.local$|node_modules/|MaximusBuild/|\.zip$|supabase/backups/'
+          if ($forbidden) { throw "Arquivos proibidos versionados: $forbidden" }
+          $large = git ls-files | ForEach-Object {
+            if (Test-Path $_) {
+              $item = Get-Item $_
+              if ($item.Length -gt 100MB) { $_ }
+            }
+          }
+          if ($large) { throw "Arquivos acima de 100 MB versionados: $large" }
+
+      - name: Validate JSON
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Filter *.json | Where-Object { $_.FullName -notmatch '\\node_modules\\|\\MaximusBuild\\' } | ForEach-Object {
+            Get-Content $_.FullName -Raw | ConvertFrom-Json | Out-Null
+          }
+
+      - name: Validate Docker Compose
+        run: docker compose --env-file .env.example config
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

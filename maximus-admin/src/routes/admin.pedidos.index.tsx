@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+﻿import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import {
   ArrowRight,
@@ -29,27 +29,46 @@ export const Route = createFileRoute("/admin/pedidos/")({
   component: PedidosPage,
 });
 
-type QueueKey = "novo" | "pagamento" | "preparo" | "pronto" | "saiu";
+type QueueKey = "entrada" | "producao" | "finalizacao";
 
 const QUEUES: { key: QueueKey; title: string }[] = [
-  { key: "novo", title: "Novo" },
-  { key: "pagamento", title: "Pagamento informado" },
-  { key: "preparo", title: "Em preparo" },
-  { key: "pronto", title: "Pronto" },
-  { key: "saiu", title: "Saiu / Retirada" },
+  { key: "entrada", title: "Novos pedidos" },
+  { key: "producao", title: "Em produção" },
+  { key: "finalizacao", title: "Entrega / Finalização" },
 ];
 
 const PREP_STATUSES: OrderStatus[] = ["accepted", "in_preparation"];
 const READY_STATUSES: OrderStatus[] = ["ready", "ready_for_pickup"];
-const OUT_STATUSES: OrderStatus[] = ["out_for_delivery", "driver_on_way", "driver_nearby"];
+const OUT_STATUSES: OrderStatus[] = [
+  "out_for_delivery",
+  "driver_on_way",
+  "driver_nearby",
+  "arrived",
+];
+
 function queueFor(order: Order): QueueKey | null {
   if (isFinalStatus(order.status)) return null;
-  if (order.paymentMethod === "pix_app" && isPaymentBlocked(order)) return "pagamento";
-  if (order.status === "received") return "novo";
-  if (PREP_STATUSES.includes(order.status)) return "preparo";
-  if (READY_STATUSES.includes(order.status)) return "pronto";
-  if (OUT_STATUSES.includes(order.status)) return "saiu";
-  return null;
+
+  const hasCourier = order.type === "delivery" && Boolean(assignedCourierId(order));
+
+  if (OUT_STATUSES.includes(order.status)) return "finalizacao";
+
+  if (READY_STATUSES.includes(order.status)) {
+    return hasCourier ? "finalizacao" : "producao";
+  }
+
+  if (order.status === "in_preparation") return "producao";
+
+  if (
+    order.status === "received" ||
+    order.status === "accepted" ||
+    isPaymentPending(order) ||
+    isPaymentBlocked(order)
+  ) {
+    return "entrada";
+  }
+
+  return "entrada";
 }
 
 function urgencyClass(order: Order) {
@@ -123,18 +142,32 @@ function driverDeliveriesToday(orders: Order[], courierId: string) {
 }
 
 function nextActionLabel(order: Order) {
-  if (isPaymentPending(order)) return "Confirmar Pix";
+  const hasCourier = order.type === "delivery" && Boolean(assignedCourierId(order));
+
+  if (isPaymentPending(order)) return "Confirmar pagamento";
   if (order.paymentStatus === "rejected") return "Pagamento bloqueado";
   if (order.paymentStatus === "pending") return "Aguardando cliente";
+
   if (order.status === "received") return "Aceitar pedido";
   if (order.status === "accepted") return "Iniciar produção";
-  if (order.status === "in_preparation") return "Marcar pronto";
-  if (READY_STATUSES.includes(order.status) && order.type === "delivery")
-    return "Saiu para entrega";
-  if (READY_STATUSES.includes(order.status) && order.type === "mesa")
+  if (order.status === "in_preparation") return "Pedido pronto";
+
+  if (READY_STATUSES.includes(order.status) && order.type === "delivery" && !hasCourier) {
+    return "Escolher entregador";
+  }
+
+  if (READY_STATUSES.includes(order.status) && order.type === "delivery" && hasCourier) {
+    return "Sair para entrega";
+  }
+
+  if (READY_STATUSES.includes(order.status) && order.type === "mesa") {
     return "Marcar entregue na mesa";
+  }
+
   if (READY_STATUSES.includes(order.status)) return "Liberar retirada";
-  if (OUT_STATUSES.includes(order.status)) return "Concluir entrega";
+
+  if (OUT_STATUSES.includes(order.status)) return "Concluir pedido";
+
   return "Avançar etapa";
 }
 
@@ -180,6 +213,11 @@ function PedidoCard({
       return;
     }
     if (isReady && order.type === "delivery") {
+      if (!hasAssignedCourier) {
+        onAssignCourier(order);
+        return;
+      }
+
       updateStatus(order.id, "out_for_delivery");
       return;
     }
@@ -301,39 +339,25 @@ function PedidoCard({
           ) : (
             !isFinalStatus(order.status) && (
               <div>
-                {isReady && order.type === "delivery" && hasAssignedCourier ? (
-                  <button
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onAssignCourier(order);
-                    }}
-                    disabled={blockedByPayment}
-                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-secondary px-2 py-1.5 text-xs font-extrabold hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Trocar entregador
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    runPrimaryAction();
+                  }}
+                  disabled={blockedByPayment}
+                  className={`inline-flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-extrabold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
+                    isOut ? "bg-emerald-600" : "bg-primary"
+                  }`}
+                >
+                  {nextActionLabel(order)}
+                  {isPaymentPending(order) ? (
+                    <ReceiptText className="h-3.5 w-3.5" />
+                  ) : order.type === "delivery" && (isReady || isOut) ? (
                     <Truck className="h-3.5 w-3.5" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      runPrimaryAction();
-                    }}
-                    disabled={blockedByPayment}
-                    className={`inline-flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-extrabold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${
-                      isOut ? "bg-emerald-600" : "bg-primary"
-                    }`}
-                  >
-                    {nextActionLabel(order)}
-                    {isPaymentPending(order) ? (
-                      <ReceiptText className="h-3.5 w-3.5" />
-                    ) : order.type === "delivery" && (isReady || isOut) ? (
-                      <Truck className="h-3.5 w-3.5" />
-                    ) : (
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                )}
+                  ) : (
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  )}
+                </button>
               </div>
             )
           )}
@@ -473,14 +497,13 @@ function DriverDeliveriesBoard({ couriers, orders }: { couriers: Courier[]; orde
   }
 
   return (
-    <aside className="min-w-0 rounded-lg border border-border bg-secondary/35 p-2 xl:sticky xl:top-3 xl:max-h-[calc(100vh-1.5rem)] xl:overflow-y-auto">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+    <aside className="min-w-0 rounded-md border border-border bg-secondary/20 p-1 xl:sticky xl:top-3 xl:max-h-[calc(100vh-1.5rem)] xl:overflow-y-auto">
+      <div className="mb-0.5 flex flex-wrap items-center justify-between gap-1">
         <div>
-          <h2 className="text-sm font-extrabold">Entregadores</h2>
-          <p className="text-[11px] text-muted-foreground">Pedidos atribuídos ativos.</p>
+          <h2 className="text-xs font-extrabold">Entregadores</h2>
         </div>
       </div>
-      <div className="grid gap-2">
+      <div className="grid gap-1">
         {activeCouriers.map((courier) => {
           const driverColor = getDriverColor(courier.id);
           const courierOrders = activeAssignedOrders.filter(
@@ -490,28 +513,28 @@ function DriverDeliveriesBoard({ couriers, orders }: { couriers: Courier[]; orde
           return (
             <section
               key={courier.id}
-              className={`min-w-0 rounded-md border bg-card p-2 ${driverColor.border}`}
+              className={`min-w-0 rounded border bg-card px-1.5 py-0.5 ${driverColor.border}`}
             >
               <button
                 type="button"
                 onClick={() => toggleCourier(courier.id)}
-                className="flex w-full items-center justify-between gap-2 text-left"
+                className="flex w-full items-center justify-between gap-1 text-left leading-none"
               >
                 <div className="min-w-0">
-                  <h3 className="flex items-center gap-1.5 truncate text-xs font-extrabold">
-                    <span className={`h-2.5 w-2.5 rounded-full ${driverColor.dot}`} />
+                  <h3 className="flex items-center gap-1 truncate text-[10px] font-extrabold leading-3">
+                    <span className={`h-1.5 w-1.5 rounded-full ${driverColor.dot}`} />
                     {courier.name}
                   </h3>
-                  <p className="text-[11px] font-semibold text-muted-foreground">
+                  <p className="text-[10px] font-semibold leading-3 text-muted-foreground">
                     {courier.status === "disponivel" ? "Disponível" : "Indisponível"}
                   </p>
                 </div>
-                <span className="inline-flex items-center gap-1 rounded-md bg-secondary px-1.5 py-0.5 text-[11px] font-bold">
+                <span className="inline-flex items-center gap-0.5 rounded bg-secondary px-1 py-0 text-[9px] font-bold leading-3">
                   {courierOrders.length}
                   {expanded ? (
-                    <ChevronDown className="h-3 w-3" />
+                    <ChevronDown className="h-2.5 w-2.5" />
                   ) : (
-                    <ChevronRight className="h-3 w-3" />
+                    <ChevronRight className="h-2.5 w-2.5" />
                   )}
                 </span>
               </button>
@@ -561,7 +584,7 @@ function DriverDeliveriesBoard({ couriers, orders }: { couriers: Courier[]; orde
                               onClick={() => openOrderRoute(order)}
                               className="inline-flex items-center justify-center gap-1 rounded-md bg-secondary px-1.5 py-1 text-[11px] font-bold hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              <MapPinned className="h-3 w-3" />
+                              <MapPinned className="h-2.5 w-2.5" />
                               Rota
                             </button>
                           </div>
@@ -612,10 +635,10 @@ function PedidosPage() {
           </p>
         </div>
       </div>
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,3fr)_minmax(280px,1fr)] xl:items-start">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,3fr)_minmax(190px,220px)] xl:items-start">
         <section className="min-w-0">
           <div className="overflow-x-auto pb-1">
-            <div className="grid min-w-[1080px] grid-cols-5 gap-2">
+            <div className="grid min-w-[960px] grid-cols-3 gap-3">
               {QUEUES.map((queue) => {
                 const queueOrders = sorted.filter((order) => queueFor(order) === queue.key);
                 return (

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type HTMLAttributes } from "react";
+﻿import { useEffect, useId, useState, type HTMLAttributes } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Check, Copy } from "lucide-react";
 import { toast } from "sonner";
@@ -16,6 +16,7 @@ import {
   findCustomerByPhone,
   getCurrentCustomer,
   getSavedCustomerProfile,
+  isCustomerConfirmedThisSession,
   saveCustomer,
   saveSavedCustomerProfile,
 } from "@/lib/customer";
@@ -66,14 +67,7 @@ export const Route = createFileRoute("/checkout-mesa")({
 });
 
 type Step =
-  | "choice"
-  | "contact"
-  | "payment"
-  | "payDelivery"
-  | "payCash"
-  | "payCard"
-  | "payPix"
-  | "payApp";
+  "choice" | "contact" | "payment" | "payDelivery" | "payCash" | "payCard" | "payPix" | "payApp";
 
 type MesaConsumptionMode = "dine_in" | "pickup";
 
@@ -97,6 +91,7 @@ function CheckoutMesaPage() {
 
   // Form state
   const [step, setStep] = useState<Step>("choice");
+  const customerAlreadyConfirmed = isCustomerConfirmedThisSession();
   const [consumptionMode, setConsumptionMode] = useState<MesaConsumptionMode>("dine_in");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -137,9 +132,9 @@ function CheckoutMesaPage() {
   // ── Auto-fill by phone ───────────────────────────────────────────────────
   useEffect(() => {
     const digits = phone.replace(/\D/g, "");
-    if (digits.length < 8) return;
+    if (digits.length < 10 || name.trim().length < 2) return;
     const timeout = window.setTimeout(() => {
-      findCustomerByPhone(phone)
+      findCustomerByPhone(phone, name)
         .then((c) => {
           if (!c) return;
           setName((n) => n || c.name);
@@ -147,7 +142,7 @@ function CheckoutMesaPage() {
         .catch(() => undefined);
     }, 350);
     return () => window.clearTimeout(timeout);
-  }, [phone]);
+  }, [name, phone]);
 
   // ── Load units (to resolve unit id/slug for order submission) ───────────
   useEffect(() => {
@@ -227,11 +222,16 @@ function CheckoutMesaPage() {
       return null;
     }
     const customer = await saveCustomer({ name, phone });
+
+    if (!customer) {
+      throw new Error("Não foi possível salvar os dados do cliente.");
+    }
+
     setHasSavedProfile(true);
     saveSavedCustomerProfile({
-      name: customer.name,
-      phone: customer.phone,
-      customer_id: customer.id,
+      name: customer?.name ?? name,
+      phone: customer?.phone ?? phone,
+      customer_id: customer?.id,
     });
     return customer;
   }
@@ -272,6 +272,11 @@ function CheckoutMesaPage() {
       // attach a table to the order.
       let tableId: string | null = null;
       if (selectedConsumptionMode === "dine_in") {
+        if (!effectiveTable) {
+          toast.error("Mesa não informada. Escaneie novamente o QR Code.");
+          setSubmitting(false);
+          return;
+        }
         const publicTable = await findPublicTable(unit.slug, effectiveTable);
         tableId = publicTable?.id ?? null;
         if (!tableId) {
@@ -341,9 +346,9 @@ function CheckoutMesaPage() {
 
       if (customer) {
         saveSavedCustomerProfile({
-          name: customer.name,
-          phone: customer.phone,
-          customer_id: customer.id,
+          name: customer?.name ?? name,
+          phone: customer?.phone ?? phone,
+          customer_id: customer?.id,
         });
       }
 
@@ -460,7 +465,7 @@ function CheckoutMesaPage() {
               description={`Serviremos o pedido na Mesa ${displayMesa}.`}
               onClick={() => {
                 setConsumptionMode("dine_in");
-                setStep("contact");
+                setStep(customerAlreadyConfirmed ? "payment" : "contact");
               }}
             />
             <BigOption
@@ -468,7 +473,7 @@ function CheckoutMesaPage() {
               description="Prepararemos para retirada, sem rota ou dados extras."
               onClick={() => {
                 setConsumptionMode("pickup");
-                setStep("contact");
+                setStep(customerAlreadyConfirmed ? "payment" : "contact");
               }}
             />
           </div>
@@ -551,7 +556,7 @@ function CheckoutMesaPage() {
         <CheckoutShell
           title="Como você quer pagar?"
           subtitle={`Total: ${formatPrice(subtotal)}`}
-          onBack={() => setStep("contact")}
+          onBack={() => setStep(customerAlreadyConfirmed ? "choice" : "contact")}
         >
           <div className="space-y-3">
             <BigOption

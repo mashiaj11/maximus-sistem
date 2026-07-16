@@ -100,14 +100,6 @@ type StoreTableRow = {
   active: boolean;
 };
 
-type CustomerRow = {
-  id: string;
-  name: string;
-  phone: string;
-  created_at: string;
-  updated_at: string;
-};
-
 type AddressRow = {
   id: string;
   customer_id: string;
@@ -128,63 +120,66 @@ type AddressRow = {
   is_primary: boolean;
   is_active?: boolean | null;
   deleted_at?: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
 };
 
-type OrderRow = {
+type CustomerLookupRpc = {
   id: string;
-  unit_id: string;
-  order_number: number;
-  order_type: "delivery" | "dine_in" | "takeaway";
-  status: string;
-  payment_status: string;
-  payment_method: string | null;
-  customer_name: string | null;
-  customer_phone: string | null;
-  recipient_name: string | null;
-  recipient_phone: string | null;
-  recipient_notes: string | null;
-  delivery_lat: number | null;
-  delivery_lng: number | null;
-  delivery_location_source: OrderInfo["deliveryLocationSource"] | null;
-  geocoding_status: OrderInfo["geocodingStatus"] | null;
-  customer_lat: number | null;
-  customer_lng: number | null;
-  customer_address_text: string | null;
-  delivery_distance_km: number | null;
-  delivery_zone_id: string | null;
-  delivery_zone_name: string | null;
-  delivery_estimated_time: number | null;
-  delivery_calculation_method: string | null;
-  delivery_fee: number | null;
-  delivery_fee_snapshot: number | null;
-  minimum_order_value: number | null;
-  driver_lat: number | null;
-  driver_lng: number | null;
-  total: number;
-  created_at: string;
-  units?: {
-    slug: string;
-    name: string;
-  } | null;
-  customer_addresses?: {
-    street: string;
-    number: string | null;
-    neighborhood: string | null;
-    complement: string | null;
-    reference: string | null;
-    latitude: number | null;
-    longitude: number | null;
-    delivery_zone_name?: string | null;
-  } | null;
+  name: string;
+  phone: string;
 };
 
-type OrderItemRow = {
-  order_id: string;
+type CustomerOrderItemRpc = {
+  id: string;
+  product_id: string | null;
   product_name: string;
   quantity: number;
+  unit_price: number;
   total_price: number;
+  customizations: string[] | null;
+  notes: string | null;
+};
+
+type CustomerOrderRpc = {
+  id: string;
+  order_number: number;
+  created_at: string;
+  status: string;
+  order_type: "delivery" | "dine_in" | "takeaway";
+  payment_method: string | null;
+  payment_status: string;
+  subtotal: number;
+  delivery_fee: number;
+  total: number;
+  customer_address_text: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  address_neighborhood: string | null;
+  notes: string | null;
+  items: CustomerOrderItemRpc[];
+  unit_name?: string | null;
+  delivery_estimated_time?: number | null;
+  delivery_zone_name?: string | null;
+};
+
+export type CustomerReorderPayload = {
+  unit_id: string;
+  order_type: "delivery" | "dine_in" | "takeaway";
+  items: Array<{
+    product_id: string | null;
+    product_name: string;
+    quantity: number;
+    notes: string;
+    available: boolean;
+    selections: Array<{
+      group_id?: string;
+      choice_id?: string;
+      group_name?: string;
+      choice_name?: string;
+      available: boolean;
+    }>;
+  }>;
 };
 
 export type PublicTable = {
@@ -258,79 +253,83 @@ function productAllowed(
 function mapOptionGroups(value: unknown): ProductOptionGroup[] {
   if (!Array.isArray(value)) return [];
 
-  return value.map((group) => {
-    const item = group as {
-      id?: string;
-      name?: string;
-      title?: string;
-      type?: "single" | "multiple";
-      required?: boolean;
-      isRequired?: boolean;
-      decisionRequired?: boolean;
-      decision_required?: boolean;
-      active?: boolean;
-      sortOrder?: number;
-      sort_order?: number;
-      minChoices?: number;
-      maxChoices?: number;
-      min?: number;
-      max?: number;
-      choices?: Array<{
+  return value
+    .map((group) => {
+      const item = group as {
         id?: string;
         name?: string;
-        label?: string;
-        priceDelta?: number;
-        price?: number;
+        title?: string;
+        type?: "single" | "multiple";
+        required?: boolean;
+        isRequired?: boolean;
+        decisionRequired?: boolean;
+        decision_required?: boolean;
         active?: boolean;
-        isNegativeChoice?: boolean;
-        is_negative_choice?: boolean;
-        maxQuantity?: number;
-        max_quantity?: number;
         sortOrder?: number;
         sort_order?: number;
-      }>;
-      options?: Array<{
-        id?: string;
-        name?: string;
-        label?: string;
-        priceDelta?: number;
-        price?: number;
-        active?: boolean;
-        isNegativeChoice?: boolean;
-        is_negative_choice?: boolean;
-        maxQuantity?: number;
-        max_quantity?: number;
-        sortOrder?: number;
-        sort_order?: number;
-      }>;
-    };
+        minChoices?: number;
+        maxChoices?: number;
+        min?: number;
+        max?: number;
+        choices?: Array<{
+          id?: string;
+          name?: string;
+          label?: string;
+          priceDelta?: number;
+          price?: number;
+          active?: boolean;
+          isNegativeChoice?: boolean;
+          is_negative_choice?: boolean;
+          maxQuantity?: number;
+          max_quantity?: number;
+          sortOrder?: number;
+          sort_order?: number;
+        }>;
+        options?: Array<{
+          id?: string;
+          name?: string;
+          label?: string;
+          priceDelta?: number;
+          price?: number;
+          active?: boolean;
+          isNegativeChoice?: boolean;
+          is_negative_choice?: boolean;
+          maxQuantity?: number;
+          max_quantity?: number;
+          sortOrder?: number;
+          sort_order?: number;
+        }>;
+      };
 
-    const choices = item.choices ?? item.options ?? [];
-    return {
-      id: item.id ?? item.name ?? crypto.randomUUID(),
-      title: item.title ?? item.name ?? "Opções",
-      type: item.type ?? (Number(item.maxChoices ?? item.max ?? 1) > 1 ? "multiple" : "single"),
-      required: Boolean(item.required ?? item.isRequired),
-      min: item.min ?? item.minChoices,
-      max: item.max ?? item.maxChoices,
-      decisionRequired: Boolean(item.decisionRequired ?? item.decision_required),
-      active: item.active !== false,
-      sortOrder: item.sortOrder ?? item.sort_order ?? 0,
-      options: choices
-        .filter((choice) => choice.active !== false)
-        .sort((a, b) => (a.sortOrder ?? a.sort_order ?? 0) - (b.sortOrder ?? b.sort_order ?? 0))
-        .map((choice) => ({
-          id: choice.id ?? choice.name ?? crypto.randomUUID(),
-          label: choice.label ?? choice.name ?? "Opção",
-          price: choice.price ?? choice.priceDelta,
-          isNegativeChoice: Boolean(choice.isNegativeChoice ?? choice.is_negative_choice),
-          maxQuantity: choice.maxQuantity ?? choice.max_quantity ?? 1,
-        })),
-    };
-  }).filter((group) => group.active !== false).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      const choices = item.choices ?? item.options ?? [];
+      return {
+        id: item.id ?? item.name ?? crypto.randomUUID(),
+        title: item.title ?? item.name ?? "Opções",
+        type: item.type ?? (Number(item.maxChoices ?? item.max ?? 1) > 1 ? "multiple" : "single"),
+        required: Boolean(item.required ?? item.isRequired),
+        min: item.min ?? item.minChoices,
+        max: item.max ?? item.maxChoices,
+        decisionRequired: Boolean(item.decisionRequired ?? item.decision_required),
+        active: item.active !== false,
+        sortOrder: item.sortOrder ?? item.sort_order ?? 0,
+        options: choices
+          .filter((choice) => choice.active !== false)
+          .sort((a, b) => (a.sortOrder ?? a.sort_order ?? 0) - (b.sortOrder ?? b.sort_order ?? 0))
+          .map((choice) => ({
+            id: choice.id ?? choice.name ?? crypto.randomUUID(),
+            label: choice.label ?? choice.name ?? "Opção",
+            price: choice.price ?? choice.priceDelta,
+            isNegativeChoice: Boolean(choice.isNegativeChoice ?? choice.is_negative_choice),
+            maxQuantity: choice.maxQuantity ?? choice.max_quantity ?? 1,
+          })),
+      };
+    })
+    .filter((group) => group.active !== false)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 }
 
 function mapAddress(row: AddressRow): CustomerAddress {
+  const now = Date.now();
   return {
     id: row.id,
     label: row.label ?? "Casa",
@@ -349,12 +348,12 @@ function mapAddress(row: AddressRow): CustomerAddress {
     deliveryFeeSnapshot:
       row.delivery_fee_snapshot == null ? undefined : Number(row.delivery_fee_snapshot),
     isDefault: row.is_primary,
-    createdAt: new Date(row.created_at).getTime(),
-    updatedAt: new Date(row.updated_at).getTime(),
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : now,
+    updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : now,
   };
 }
 
-function mapOrderMode(type: OrderRow["order_type"]): OrderTrackMode {
+function mapOrderMode(type: "delivery" | "dine_in" | "takeaway"): OrderTrackMode {
   if (type === "delivery") return "delivery";
   if (type === "dine_in") return "mesa";
   return "retirada";
@@ -377,10 +376,6 @@ function statusLabel(status: string) {
     cancelled: "Cancelado",
   };
   return labels[status] ?? status;
-}
-
-function settingsByUnitId(rows: AdminSettingsRow[] | null | undefined) {
-  return new Map((rows ?? []).map((row) => [row.unit_id, row]));
 }
 
 function mapPublicUnit(unit: UnitRow, settings?: AdminSettingsRow): GeoUnit {
@@ -481,6 +476,25 @@ async function queryOrThrow<T>(
   return data;
 }
 
+async function rpcOrThrow<T>(functionName: string, args: Record<string, unknown>): Promise<T> {
+  const { data, error } = await getSupabaseClient().rpc(functionName, args);
+  if (error) {
+    const rpcError = error as { code?: string; message: string };
+    const missingRpc =
+      rpcError.code === "PGRST202" ||
+      rpcError.message.toLowerCase().includes("could not find the function") ||
+      rpcError.message.toLowerCase().includes("schema cache");
+    if (missingRpc) {
+      console.error(
+        "RPC de cliente/endereço não encontrada no Supabase. Verifique se as migrations foram aplicadas.",
+        { functionName, code: rpcError.code },
+      );
+    }
+    throw new Error(rpcError.message);
+  }
+  return data as T;
+}
+
 async function loadPublicUnitRows(label: string) {
   const { data, error } = await getSupabaseClient()
     .from("units")
@@ -559,19 +573,7 @@ export function clearRememberedLastOrderId() {
 
 export async function loadPublicUnits() {
   const rows = await loadPublicUnitRows("units");
-  const settings = (await queryOrThrow(
-    "admin_settings",
-    getSupabaseClient()
-      .from("admin_settings")
-      .select(
-        "unit_id, official_phone, whatsapp_number, minimum_order_value, base_delivery_fee, delivery_fee_per_km, max_delivery_distance_km, free_delivery_from",
-      ),
-  )) as AdminSettingsRow[];
-  const settingsMap = settingsByUnitId(settings);
-
-  return rows.map((unit) => ({
-    ...mapPublicUnit(unit, settingsMap.get(unit.id)),
-  }));
+  return rows.map((unit) => mapPublicUnit(unit));
 }
 
 export async function loadActivePublicUnit(unitSlug?: string) {
@@ -618,16 +620,7 @@ export async function loadPublicMenu(
 ): Promise<PublicMenuData> {
   const supabase = getSupabaseClient();
   const unitRows = await loadPublicUnitRows("units");
-  const adminSettings = (await queryOrThrow(
-    "admin_settings",
-    supabase
-      .from("admin_settings")
-      .select(
-        "unit_id, official_phone, whatsapp_number, minimum_order_value, base_delivery_fee, delivery_fee_per_km, max_delivery_distance_km, free_delivery_from",
-      ),
-  )) as AdminSettingsRow[];
-  const unitSettings = settingsByUnitId(adminSettings);
-  const units = unitRows.map((unit) => mapPublicUnit(unit, unitSettings.get(unit.id)));
+  const units = unitRows.map((unit) => mapPublicUnit(unit));
   const openUnits = units.filter((unit) => unit.isOpen);
   const requestedUnit = units.find((unit) => unit.slug === unitSlug || unit.id === unitSlug);
   const selectedUnit =
@@ -838,95 +831,92 @@ export async function loadDeliveryZones(unitId: string): Promise<DeliveryZone[]>
   }));
 }
 
-export async function getCustomerByPhone(phone: string): Promise<CustomerProfile | null> {
-  const cleanPhone = normalizePhone(phone);
-  if (!cleanPhone) return null;
-  const supabase = getSupabaseClient();
-  const customers = (await queryOrThrow(
-    "customers",
-    supabase
-      .from("customers")
-      .select("id, name, phone, created_at, updated_at")
-      .eq("phone", cleanPhone)
-      .limit(1),
-  )) as CustomerRow[];
-  const customer = customers[0];
-  if (!customer) return null;
-  const [addresses, orderRows] = await Promise.all([
-    queryOrThrow(
-      "customer_addresses",
-      supabase
-        .from("customer_addresses")
-        .select(
-          "id, customer_id, label, street, number, complement, neighborhood, city, state, postal_code, reference, latitude, longitude, delivery_zone_id, delivery_zone_name, delivery_fee_snapshot, is_primary, created_at, updated_at",
-        )
-        .eq("customer_id", customer.id)
-        .eq("is_active", true)
-        .order("created_at"),
-    ) as Promise<AddressRow[] | null>,
-    queryOrThrow(
-      "orders",
-      supabase
-        .from("orders")
-        .select(
-          "id, unit_id, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, total, created_at",
-        )
-        .eq("customer_id", customer.id)
-        .order("created_at", { ascending: false })
-        .limit(20),
-    ) as Promise<OrderRow[] | null>,
-  ]);
-  const orderIds = (orderRows ?? []).map((order) => order.id);
-  const itemRows = orderIds.length
-    ? ((await queryOrThrow(
-        "order_items",
-        supabase
-          .from("order_items")
-          .select("order_id, product_name, quantity, total_price")
-          .in("order_id", orderIds),
-      )) as OrderItemRow[])
-    : [];
-  const itemsByOrder = new Map<string, OrderItemRow[]>();
-  for (const item of itemRows) {
-    itemsByOrder.set(item.order_id, [...(itemsByOrder.get(item.order_id) ?? []), item]);
-  }
+function mapCustomerOrder(order: CustomerOrderRpc): CustomerOrderHistory {
+  const address = order.address_street
+    ? {
+        id: `order-address-${order.id}`,
+        label: "Outro" as const,
+        street: order.address_street,
+        number: order.address_number ?? "",
+        neighborhood: order.address_neighborhood ?? "",
+        isDefault: false,
+        createdAt: new Date(order.created_at).getTime(),
+        updatedAt: new Date(order.created_at).getTime(),
+      }
+    : undefined;
+  return {
+    id: order.id,
+    number: `#${order.order_number}`,
+    date: new Date(order.created_at).getTime(),
+    items: (order.items ?? []).map((item) => ({
+      productId: item.product_id ?? undefined,
+      name: item.product_name,
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.unit_price),
+      total: Number(item.total_price),
+      customizations: item.customizations ?? [],
+      notes: item.notes ?? undefined,
+    })),
+    subtotal: Number(order.subtotal ?? 0),
+    deliveryFee: Number(order.delivery_fee ?? 0),
+    total: Number(order.total),
+    mode: mapOrderMode(order.order_type),
+    status: statusLabel(order.status),
+    rawStatus: order.status,
+    paymentMethod: order.payment_method ?? undefined,
+    paymentStatus: order.payment_status,
+    address,
+  };
+}
 
-  const profile = {
+async function loadCustomerProfile(customer: CustomerLookupRpc): Promise<CustomerProfile> {
+  const [addresses, orders] = await Promise.all([
+    rpcOrThrow<AddressRow[]>("customer_list_addresses_by_phone", {
+      p_phone: customer.phone,
+      p_name: customer.name,
+    }),
+    rpcOrThrow<CustomerOrderRpc[]>("customer_list_orders_by_phone", {
+      p_phone: customer.phone,
+      p_name: customer.name,
+    }),
+  ]);
+  const now = Date.now();
+  const profile: CustomerProfile = {
     id: customer.id,
     name: customer.name,
     phone: customer.phone,
     addresses: (addresses ?? []).map(mapAddress),
-    orders: (orderRows ?? []).map(
-      (order): CustomerOrderHistory => ({
-        id: order.id,
-        number: `#${order.order_number}`,
-        date: new Date(order.created_at).getTime(),
-        items: (itemsByOrder.get(order.id) ?? []).map((item) => ({
-          name: item.product_name,
-          quantity: item.quantity,
-          total: Number(item.total_price),
-        })),
-        total: Number(order.total),
-        mode: mapOrderMode(order.order_type),
-        status: statusLabel(order.status),
-      }),
-    ),
-    createdAt: new Date(customer.created_at).getTime(),
-    updatedAt: new Date(customer.updated_at).getTime(),
+    orders: (orders ?? []).slice(0, 20).map(mapCustomerOrder),
+    createdAt: now,
+    updatedAt: now,
   };
   saveLocalCustomerProfile({
     name: profile.name,
     phone: profile.phone,
     customer_id: profile.id,
-    last_address_id: profile.addresses.find((address) => address.isDefault)?.id,
+    last_address_id: profile.addresses.find((a) => a.isDefault)?.id,
   });
   return profile;
+}
+
+export async function getCustomerByPhone(
+  phone: string,
+  name?: string,
+): Promise<CustomerProfile | null> {
+  const cleanPhone = normalizePhone(phone);
+  if (cleanPhone.length < 10 || cleanPhone.length > 13) return null;
+  const customer = await rpcOrThrow<CustomerLookupRpc>("customer_lookup_by_phone", {
+    p_phone: cleanPhone,
+    p_name: name?.trim() || null,
+  });
+  if (!customer?.id) return null;
+  return loadCustomerProfile(customer);
 }
 
 export async function getCurrentCustomerFromSupabase(): Promise<CustomerProfile | null> {
   const localProfile = getLocalCustomerProfile();
   const phone = localProfile?.phone ?? getRememberedCustomerPhone();
-  return phone ? getCustomerByPhone(phone) : null;
+  return phone ? getCustomerByPhone(phone, localProfile?.name) : null;
 }
 
 export async function saveCustomerToSupabase(data: {
@@ -934,140 +924,146 @@ export async function saveCustomerToSupabase(data: {
   phone: string;
 }): Promise<CustomerProfile> {
   const phone = normalizePhone(data.phone);
-  const supabase = getSupabaseClient();
-  const existing = await getCustomerByPhone(phone);
-  if (existing) {
-    await queryOrThrow(
-      "update customer",
-      supabase.from("customers").update({ name: data.name.trim() }).eq("id", existing.id),
-    );
-    rememberCustomerPhone(phone);
-    saveLocalCustomerProfile({
-      name: data.name,
-      phone,
-      customer_id: existing.id,
-      last_address_id: existing.addresses.find((address) => address.isDefault)?.id,
+  let profile: CustomerProfile;
+  try {
+    const customer = await rpcOrThrow<CustomerLookupRpc>("customer_lookup_by_phone", {
+      p_phone: phone,
+      p_name: data.name.trim(),
     });
-    return { ...existing, name: data.name.trim(), updatedAt: Date.now() };
+    profile = await loadCustomerProfile(customer);
+  } catch (error) {
+    if (!isMissingCustomerRpc(error)) throw error;
+    const now = Date.now();
+    profile = {
+      id: `local-${phone}`,
+      name: data.name.trim(),
+      phone,
+      addresses: [],
+      orders: [],
+      createdAt: now,
+      updatedAt: now,
+    };
   }
-
-  const row = (await queryOrThrow(
-    "insert customer",
-    supabase
-      .from("customers")
-      .insert({ name: data.name.trim(), phone })
-      .select("id, name, phone, created_at, updated_at")
-      .single(),
-  )) as CustomerRow;
   rememberCustomerPhone(phone);
-  saveLocalCustomerProfile({ name: row.name, phone: row.phone, customer_id: row.id });
-  return {
-    id: row.id,
-    name: row.name,
-    phone: row.phone,
-    addresses: [],
-    orders: [],
-    createdAt: new Date(row.created_at).getTime(),
-    updatedAt: new Date(row.updated_at).getTime(),
-  };
+  saveLocalCustomerProfile({ name: profile.name, phone: profile.phone, customer_id: profile.id });
+  return profile;
+}
+
+function isMissingCustomerRpc(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("customer_lookup_by_phone") &&
+    (message.includes("could not find") ||
+      message.includes("schema cache") ||
+      message.includes("function") ||
+      message.includes("pgrst202"))
+  );
 }
 
 export async function saveAddressToSupabase(
   customerId: string,
   address: Omit<CustomerAddress, "id" | "createdAt" | "updatedAt"> & { id?: string },
 ): Promise<CustomerProfile> {
-  const supabase = getSupabaseClient();
-  const payload = {
-    customer_id: customerId,
-    label: address.label,
-    street: address.street,
-    number: address.number,
-    complement: address.complement ?? null,
-    neighborhood: address.neighborhood,
-    city: address.city ?? "Santarem",
-    state: address.state ?? "PA",
-    postal_code: address.postalCode ?? null,
-    reference: address.reference ?? null,
-    latitude: address.latitude ?? null,
-    longitude: address.longitude ?? null,
-    delivery_zone_id: address.deliveryZoneId ?? null,
-    delivery_zone_name: address.deliveryZoneName ?? address.neighborhood ?? null,
-    delivery_fee_snapshot: address.deliveryFeeSnapshot ?? null,
-    is_primary: address.isDefault,
-    is_active: true,
-    deleted_at: null,
-  };
-
-  if (address.isDefault) {
-    await queryOrThrow(
-      "clear default address",
-      supabase
-        .from("customer_addresses")
-        .update({ is_primary: false })
-        .eq("customer_id", customerId),
-    );
-  }
-
+  const identity = requireLocalCustomerIdentity(customerId);
+  const payload = addressRpcPayload(address);
   if (address.id) {
-    await queryOrThrow(
-      "update address",
-      supabase.from("customer_addresses").update(payload).eq("id", address.id),
-    );
+    await rpcOrThrow("customer_update_address_by_phone", {
+      p_phone: identity.phone,
+      p_name: identity.name,
+      p_address_id: address.id,
+      p_address: payload,
+    });
   } else {
-    await queryOrThrow("insert address", supabase.from("customer_addresses").insert(payload));
+    await rpcOrThrow("customer_upsert_address_by_phone", {
+      p_phone: identity.phone,
+      p_name: identity.name,
+      p_address: payload,
+    });
   }
-
-  const customer = await getCustomerById(customerId);
-  if (!customer) throw new Error("Cliente não encontrado.");
-  saveLocalCustomerProfile({
-    name: customer.name,
-    phone: customer.phone,
-    customer_id: customer.id,
-    last_address_id:
-      customer.addresses.find((item) => item.id === address.id)?.id ??
-      customer.addresses.find((item) => item.isDefault)?.id ??
-      customer.addresses.at(-1)?.id,
-  });
-  return customer;
+  const profile = await getCustomerByPhone(identity.phone, identity.name);
+  if (!profile) throw new Error("Não foi possível atualizar os endereços do cliente.");
+  return profile;
 }
 
 export async function deleteAddressFromSupabase(
   customerId: string,
   addressId: string,
 ): Promise<CustomerProfile> {
-  const supabase = getSupabaseClient();
-  await queryOrThrow(
-    "soft delete address",
-    supabase
-      .from("customer_addresses")
-      .update({ is_active: false, deleted_at: new Date().toISOString(), is_primary: false })
-      .eq("id", addressId)
-      .eq("customer_id", customerId),
-  );
-  const customer = await getCustomerById(customerId);
-  if (!customer) throw new Error("Cliente não encontrado.");
-  if (customer.addresses.length > 0 && !customer.addresses.some((address) => address.isDefault)) {
-    return saveAddressToSupabase(customerId, { ...customer.addresses[0], isDefault: true });
-  }
-  return customer;
+  const identity = requireLocalCustomerIdentity(customerId);
+  await rpcOrThrow("customer_delete_address_by_phone", {
+    p_phone: identity.phone,
+    p_name: identity.name,
+    p_address_id: addressId,
+  });
+  const profile = await getCustomerByPhone(identity.phone, identity.name);
+  if (!profile) throw new Error("Não foi possível atualizar os endereços do cliente.");
+  return profile;
 }
 
 export async function setDefaultAddressOnSupabase(
   customerId: string,
   addressId: string,
 ): Promise<CustomerProfile> {
-  const customer = await getCustomerById(customerId);
-  const address = customer?.addresses.find((item) => item.id === addressId);
-  if (!customer || !address) throw new Error("Endereço não encontrado.");
-  return saveAddressToSupabase(customerId, { ...address, isDefault: true });
+  const identity = requireLocalCustomerIdentity(customerId);
+  const profile = await getCustomerByPhone(identity.phone, identity.name);
+  const address = profile?.addresses.find((item) => item.id === addressId);
+  if (!address) throw new Error("Endereço não encontrado.");
+  await rpcOrThrow("customer_update_address_by_phone", {
+    p_phone: identity.phone,
+    p_name: identity.name,
+    p_address_id: addressId,
+    p_address: addressRpcPayload({ ...address, isDefault: true }),
+  });
+  const refreshed = await getCustomerByPhone(identity.phone, identity.name);
+  if (!refreshed) throw new Error("Não foi possível definir o endereço padrão.");
+  return refreshed;
 }
 
-async function getCustomerById(customerId: string) {
-  const rows = (await queryOrThrow(
-    "customer by id",
-    getSupabaseClient().from("customers").select("phone").eq("id", customerId).limit(1),
-  )) as Array<{ phone: string }>;
-  return rows[0] ? getCustomerByPhone(rows[0].phone) : null;
+function requireLocalCustomerIdentity(customerId?: string) {
+  const identity = getLocalCustomerProfile();
+  if (!identity?.phone || !identity.name) throw new Error("Informe nome e telefone do cliente.");
+  if (customerId && identity.customer_id && identity.customer_id !== customerId) {
+    throw new Error("Os dados do cliente mudaram. Informe o telefone novamente.");
+  }
+  return identity;
+}
+
+function addressRpcPayload(address: Omit<CustomerAddress, "id" | "createdAt" | "updatedAt">) {
+  return {
+    label: address.label,
+    street: address.street,
+    number: address.number,
+    neighborhood: address.neighborhood,
+    city: address.city ?? "Santarem",
+    state: address.state ?? "PA",
+    postal_code: address.postalCode ?? null,
+    complement: address.complement ?? null,
+    reference: address.reference ?? null,
+    latitude: address.latitude ?? null,
+    longitude: address.longitude ?? null,
+    delivery_zone_id: address.deliveryZoneId ?? null,
+    delivery_zone_name: address.deliveryZoneName ?? null,
+    delivery_fee_snapshot: address.deliveryFeeSnapshot ?? null,
+    is_primary: address.isDefault,
+  };
+}
+
+export async function loadCustomerOrderDetail(orderId: string) {
+  const identity = requireLocalCustomerIdentity();
+  return rpcOrThrow<CustomerOrderRpc>("customer_get_order_detail_by_phone", {
+    p_phone: identity.phone,
+    p_name: identity.name,
+    p_order_id: orderId,
+  });
+}
+
+export async function loadCustomerReorderPayload(orderId: string) {
+  const identity = requireLocalCustomerIdentity();
+  return rpcOrThrow<CustomerReorderPayload>("customer_reorder_payload_by_phone", {
+    p_phone: identity.phone,
+    p_name: identity.name,
+    p_order_id: orderId,
+  });
 }
 
 function orderTypeForMode(mode: OrderTrackMode): "delivery" | "dine_in" | "takeaway" {
@@ -1076,16 +1072,27 @@ function orderTypeForMode(mode: OrderTrackMode): "delivery" | "dine_in" | "takea
   return "takeaway";
 }
 
-function paymentStatusForOrder(status?: OrderInfo["paymentStatus"]) {
-  if (status === "pending_on_delivery") return "paid_on_delivery";
-  if (status === "paid_on_delivery") return "paid_on_delivery";
-  return status ?? "pending";
-}
-
 function paymentMethodForOrder(method?: OrderInfo["paymentMethod"]) {
   if (method === "pix_entrega") return "pix_balcao";
   if (method === "local") return "local";
   return method ?? "pix_app";
+}
+
+function secureSelectionsForCartItem(item: CartItem) {
+  return (item.product.optionGroups ?? []).flatMap((group) => {
+    const validChoiceIds = new Set(group.options.map((choice) => choice.id));
+    return (item.selections[group.id] ?? []).map((choiceId) => {
+      if (!validChoiceIds.has(choiceId)) {
+        throw new Error(
+          `Uma opção de ${item.product.name} não está mais disponível. Atualize o item no carrinho.`,
+        );
+      }
+      return {
+        group_id: group.id,
+        choice_id: choiceId,
+      };
+    });
+  });
 }
 
 async function invokeOrderWhatsAppNotification(orderId: string, status: OrderWhatsappStatus) {
@@ -1124,107 +1131,112 @@ export async function createOrderInSupabase(params: {
   if (!unit || !unit.is_open || !isOpenByBusinessHours(unit.business_hours)) {
     throw new Error("A unidade selecionada está fechada no momento.");
   }
-  const orderNumber = Math.floor(Date.now() % 1000000000);
-  const subtotal = params.cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  const deliveryFee = params.deliveryFee ?? 0;
-  const total = subtotal + deliveryFee;
-  const paymentStatus = paymentStatusForOrder(params.order.paymentStatus);
   const paymentMethod = paymentMethodForOrder(params.order.paymentMethod);
-  const order = (await queryOrThrow(
-    "insert order",
-    supabase
-      .from("orders")
-      .insert({
-        unit_id: params.unitId,
-        unit_name: params.order.unitName ?? null,
-        unit_lat: params.order.unitLat ?? null,
-        unit_lng: params.order.unitLng ?? null,
-        customer_id: params.customerId ?? null,
-        customer_address_id: params.addressId ?? null,
-        table_id: params.tableId ?? null,
-        order_number: orderNumber,
-        order_type: orderTypeForMode(params.order.mode),
-        status: "received",
-        payment_status: paymentStatus,
-        payment_method: paymentMethod,
-        customer_name: params.order.customerName ?? null,
-        customer_phone: params.order.customerPhone ?? null,
-        recipient_name: params.order.recipientName ?? null,
-        recipient_phone: params.order.recipientPhone ?? null,
-        recipient_notes: params.order.recipientNotes ?? null,
-        delivery_fee: deliveryFee,
-        delivery_fee_snapshot: deliveryFee,
-        delivery_range_id: params.deliveryRangeId ?? params.order.deliveryRangeId ?? null,
-        delivery_zone_id: params.order.deliveryZoneId ?? null,
-        delivery_zone_name: params.order.deliveryZoneName ?? null,
-        driver_earned_value: deliveryFee,
-        delivery_payout_amount: deliveryFee,
-        minimum_order_value: params.order.minimumOrderValue ?? 0,
-        delivery_distance_km: params.deliveryDistanceKm ?? null,
-        delivery_estimated_time: params.order.deliveryEstimatedTime ?? null,
-        delivery_calculation_method: params.order.deliveryCalculationMethod ?? null,
-        customer_lat: params.order.customerLat ?? null,
-        customer_lng: params.order.customerLng ?? null,
-        customer_address_text: params.order.customerAddressText ?? null,
-        delivery_lat: params.order.deliveryLat ?? null,
-        delivery_lng: params.order.deliveryLng ?? null,
-        delivery_location_source: params.order.deliveryLocationSource ?? null,
-        geocoding_status: params.order.geocodingStatus ?? null,
-        address_street: params.order.address?.street ?? null,
-        address_number: params.order.address?.number ?? null,
-        address_neighborhood: params.order.address?.neighborhood ?? null,
-        address_complement: params.order.address?.complement ?? null,
-        address_reference: params.order.address?.reference ?? null,
-        subtotal,
-        total,
-        notes: null,
-      })
-      .select("id, order_number, created_at")
-      .single(),
-  )) as { id: string; order_number: number; created_at: string };
+  const fingerprint = JSON.stringify({
+    unitId: params.unitId,
+    mode: params.order.mode,
+    phone: params.order.customerPhone,
+    tableId: params.tableId,
+    addressId: params.addressId,
+    address: params.order.address,
+    items: params.cartItems.map((item) => ({
+      productId: item.product.id,
+      quantity: item.quantity,
+      selections: item.selections,
+      note: item.note,
+    })),
+  });
+  const storageKey = "maximus:secure-checkout-idempotency";
+  let idempotencyKey = "";
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(storageKey) ?? "null") as {
+      fingerprint?: string;
+      key?: string;
+    } | null;
+    if (cached?.fingerprint === fingerprint && cached.key) idempotencyKey = cached.key;
+  } catch {
+    // O checkout continua quando o armazenamento do navegador estiver indisponivel.
+  }
+  if (!idempotencyKey) {
+    idempotencyKey = `checkout-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify({ fingerprint, key: idempotencyKey }));
+    } catch {
+      // A transacao do servidor continua protegida mesmo sem sessionStorage.
+    }
+  }
 
-  await queryOrThrow(
-    "insert order_items",
-    supabase.from("order_items").insert(
-      params.cartItems.map((item) => ({
-        order_id: order.id,
+  const address = params.order.address;
+  const { data, error } = await supabase.rpc("create_order_secure", {
+    p_payload: {
+      idempotency_key: idempotencyKey,
+      unit_id: params.unitId,
+      unit_slug: params.order.unitSlug,
+      order_type: orderTypeForMode(params.order.mode),
+      payment_method: paymentMethod,
+      customer: {
+        name: params.order.customerName ?? "",
+        phone: params.order.customerPhone ?? "",
+      },
+      table_id: params.tableId ?? null,
+      customer_address_id: params.addressId ?? null,
+      delivery_zone_id: params.order.deliveryZoneId ?? null,
+      delivery_range_id: params.deliveryRangeId ?? params.order.deliveryRangeId ?? null,
+      delivery_distance_km: params.deliveryDistanceKm ?? null,
+      address:
+        address && !params.addressId
+          ? {
+              label: address.label,
+              street: address.street,
+              number: address.number,
+              neighborhood: address.neighborhood,
+              city: "Santarem",
+              state: "PA",
+              postal_code: address.postalCode,
+              complement: address.complement,
+              reference: address.reference,
+              latitude: address.latitude,
+              longitude: address.longitude,
+              delivery_zone_id: params.order.deliveryZoneId ?? null,
+            }
+          : null,
+      items: params.cartItems.map((item) => ({
         product_id: item.product.id,
-        product_name: item.product.name,
         quantity: item.quantity,
-        unit_price: item.unitPrice,
-        total_price: item.unitPrice * item.quantity,
-        customizations: item.customizations.flatMap((group) =>
-          group.options.map((option) => `${group.groupTitle}: ${option.label}`),
-        ),
+        selections: secureSelectionsForCartItem(item),
         notes: item.note ?? null,
       })),
-    ),
-  );
-
-  await queryOrThrow(
-    "insert payment",
-    supabase.from("payments").insert({
-      order_id: order.id,
-      method: paymentMethod,
-      status: paymentStatus,
-      amount: total,
-      confirmed_at: paymentStatus === "confirmed" ? new Date().toISOString() : null,
-    }),
-  );
+    },
+  });
+  if (error) throw new Error(error.message);
+  const result = data as {
+    ok?: boolean;
+    order_id?: string;
+    order_number?: number;
+    total?: number | string;
+  } | null;
+  if (!result?.ok || !result.order_id || result.order_number == null) {
+    throw new Error("O servidor nao confirmou a criacao do pedido.");
+  }
+  try {
+    sessionStorage.removeItem(storageKey);
+  } catch {
+    // Ignora bloqueios do armazenamento apos a confirmacao.
+  }
 
   try {
-    await invokeOrderWhatsAppNotification(order.id, "received");
+    await invokeOrderWhatsAppNotification(result.order_id, "received");
   } catch (error) {
     console.error("[Maximus][WhatsApp] Falha ao notificar pedido recebido", error);
   }
 
-  rememberLastOrderId(order.id);
+  rememberLastOrderId(result.order_id);
 
   return {
-    id: order.id,
-    number: order.order_number,
-    createdAt: new Date(order.created_at).getTime(),
-    total,
+    id: result.order_id,
+    number: result.order_number,
+    createdAt: Date.now(),
+    total: Number(result.total ?? params.order.total),
   };
 }
 
@@ -1232,72 +1244,30 @@ export async function getOrderInfo(orderId: string): Promise<OrderInfo | null> {
   if (!isSupabaseConfigured) {
     throw new Error("Supabase não configurado. Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.");
   }
-
-  const rows = (await queryOrThrow(
-    "order",
-    getSupabaseClient()
-      .from("orders")
-      .select(
-        "id, unit_id, order_number, order_type, status, payment_status, payment_method, customer_name, customer_phone, recipient_name, recipient_phone, recipient_notes, delivery_fee, delivery_fee_snapshot, minimum_order_value, delivery_distance_km, delivery_zone_id, delivery_zone_name, delivery_estimated_time, delivery_calculation_method, delivery_lat, delivery_lng, delivery_location_source, geocoding_status, customer_lat, customer_lng, customer_address_text, driver_lat, driver_lng, total, created_at, units(slug, name), customer_addresses(street, number, neighborhood, complement, reference, latitude, longitude, delivery_zone_name)",
-      )
-      .eq("id", orderId)
-      .limit(1),
-  )) as OrderRow[];
-  const row = rows[0];
-  if (!row) return null;
+  const row = await loadCustomerOrderDetail(orderId);
+  const identity = requireLocalCustomerIdentity();
   return {
     id: row.id,
     mode: mapOrderMode(row.order_type),
     total: Number(row.total),
     createdAt: new Date(row.created_at).getTime(),
-    paymentStatus:
-      row.payment_status === "paid_on_delivery"
-        ? "pending_on_delivery"
-        : (row.payment_status as OrderInfo["paymentStatus"]),
+    paymentStatus: row.payment_status as OrderInfo["paymentStatus"],
     paymentMethod: row.payment_method as OrderInfo["paymentMethod"],
-    customerName: row.customer_name ?? undefined,
-    customerPhone: row.customer_phone ?? undefined,
-    recipientName: row.recipient_name ?? undefined,
-    recipientPhone: row.recipient_phone ?? undefined,
-    recipientNotes: row.recipient_notes ?? undefined,
-    unitId: row.unit_id,
-    unitSlug: row.units?.slug,
-    unitName: row.units?.name,
-    deliveryFee: Number(row.delivery_fee ?? row.delivery_fee_snapshot ?? 0),
-    deliveryDistanceKm:
-      row.delivery_distance_km == null ? undefined : Number(row.delivery_distance_km),
-    deliveryZoneId: row.delivery_zone_id ?? undefined,
-    deliveryZoneName: row.delivery_zone_name ?? row.customer_addresses?.delivery_zone_name ?? undefined,
+    customerName: identity.name,
+    customerPhone: identity.phone,
+    unitName: row.unit_name ?? undefined,
+    deliveryFee: Number(row.delivery_fee ?? 0),
+    deliveryZoneName: row.delivery_zone_name ?? undefined,
     deliveryEstimatedTime:
       row.delivery_estimated_time == null ? undefined : Number(row.delivery_estimated_time),
-    deliveryCalculationMethod: row.delivery_calculation_method ?? undefined,
-    minimumOrderValue: Number(row.minimum_order_value ?? 0),
     status: row.status,
     deliveryStatus: row.status,
-    deliveryLat: row.delivery_lat ?? row.customer_addresses?.latitude ?? undefined,
-    deliveryLng: row.delivery_lng ?? row.customer_addresses?.longitude ?? undefined,
-    deliveryLocationSource: row.delivery_location_source ?? undefined,
-    geocodingStatus: row.geocoding_status ?? undefined,
-    customerLat: row.customer_lat ?? undefined,
-    customerLng: row.customer_lng ?? undefined,
-    customerAddressText:
-      row.customer_address_text ??
-      (row.customer_addresses
-        ? [
-            `${row.customer_addresses.street}${
-              row.customer_addresses.number ? `, ${row.customer_addresses.number}` : ""
-            }`,
-            row.customer_addresses.neighborhood,
-            row.customer_addresses.complement
-              ? `Compl.: ${row.customer_addresses.complement}`
-              : null,
-            row.customer_addresses.reference ? `Ref.: ${row.customer_addresses.reference}` : null,
-          ]
-            .filter(Boolean)
-            .join(" · ")
-        : undefined),
-    driverLat: row.driver_lat ?? undefined,
-    driverLng: row.driver_lng ?? undefined,
+    customerAddressText: row.customer_address_text ?? undefined,
+    items: (row.items ?? []).map((item) => ({
+      name: item.product_name,
+      quantity: Number(item.quantity),
+      total: Number(item.total_price),
+    })),
   };
 }
 

@@ -47,7 +47,8 @@ export function calculateUnitPrice(product: Product, selections: SelectedOptions
 export function getSelectionErrors(product: Product, selections: SelectedOptions): string[] {
   return (product.optionGroups ?? []).flatMap((group) => {
     const count = selections[group.id]?.length ?? 0;
-    const min = group.required || group.decisionRequired ? Math.max(group.min ?? 1, 1) : (group.min ?? 0);
+    const min =
+      group.required || group.decisionRequired ? Math.max(group.min ?? 1, 1) : (group.min ?? 0);
 
     if (count < min) {
       return [`Escolha uma opção em ${group.title} para continuar.`];

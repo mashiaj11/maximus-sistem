@@ -25,6 +25,7 @@ declare global {
     paperWidth: 58 | 80;
     copies: number;
     margin: number;
+    scaleFactor?: number;
     simulate: boolean;
   }
 

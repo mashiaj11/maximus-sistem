@@ -11,8 +11,20 @@ import {
   setDefaultAddressOnSupabase,
 } from "./supabase-data";
 
+const CUSTOMER_SESSION_KEY = "maximus:customer-confirmed-session";
+
 export function normalizePhone(phone: string) {
   return phone.replace(/\D/g, "");
+}
+
+export function isCustomerConfirmedThisSession() {
+  return (
+    typeof window !== "undefined" && window.sessionStorage.getItem(CUSTOMER_SESSION_KEY) === "true"
+  );
+}
+
+export function confirmCustomerForSession() {
+  if (typeof window !== "undefined") window.sessionStorage.setItem(CUSTOMER_SESSION_KEY, "true");
 }
 
 export async function getCurrentCustomer() {
@@ -36,8 +48,8 @@ export function clearSavedCustomerProfile() {
   clearLocalCustomerProfile();
 }
 
-export async function findCustomerByPhone(phone: string) {
-  return getCustomerByPhone(phone);
+export async function findCustomerByPhone(phone: string, name?: string) {
+  return getCustomerByPhone(phone, name);
 }
 
 export async function saveCustomer(data: { name: string; phone: string }) {

@@ -1,0 +1,16 @@
+{
+  "name": "maximus-sistema",
+  "private": true,
+  "version": "1.0.10",
+  "description": "Scripts raiz para preparar, validar e empacotar o sistema Maximus.",
+  "scripts": {
+    "build": "npm run build:admin && npm run build:public",
+    "build:admin": "npm --prefix maximus-admin run build",
+    "build:public": "npm --prefix maximus-public run build",
+    "build:windows": "npm --prefix maximus-admin run build:windows",
+    "dist:windows": "npm --prefix maximus-admin run dist:windows",
+    "lint": "npm --prefix maximus-admin run lint && npm --prefix maximus-public run lint",
+    "typecheck": "npm --prefix maximus-admin run typecheck && npm --prefix maximus-public run typecheck",
+    "test": "node scripts/test-bot-simulation.mjs"
+  }
+}

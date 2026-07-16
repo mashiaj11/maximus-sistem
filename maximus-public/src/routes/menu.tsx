@@ -10,6 +10,7 @@ import { useCart } from "@/lib/store";
 import { cn, normalizeMesa } from "@/lib/utils";
 import type { GeoUnit } from "@/lib/geo";
 import { formatBusinessHours } from "@/lib/business-hours";
+import { isCustomerConfirmedThisSession } from "@/lib/customer";
 
 interface MenuSearch {
   mesa?: string;
@@ -73,6 +74,20 @@ function MenuPage() {
   const [allUnitsClosed, setAllUnitsClosed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [customerConfirmed] = useState(isCustomerConfirmedThisSession);
+
+  useEffect(() => {
+    if (customerConfirmed) return;
+    void navigate({
+      to: "/identificar",
+      search: {
+        ...(qrUnit ? { unit: qrUnit } : {}),
+        ...(qrTable ? { table: qrTable } : {}),
+        ...(mode ? { mode } : {}),
+      },
+      replace: true,
+    });
+  }, [customerConfirmed, mode, navigate, qrTable, qrUnit]);
 
   useEffect(() => {
     console.log("MENU QR CONTEXT", {
@@ -109,6 +124,7 @@ function MenuPage() {
   }, [mesa, mode, navigate, qrTable, qrUnit, setOrderContext, table, unidade, unit]);
 
   useEffect(() => {
+    if (!customerConfirmed) return;
     setLoading(true);
     loadPublicMenu(effectiveUnidade, effectiveIsDineIn ? "dine_in" : "delivery")
       .then((data) => {
@@ -124,7 +140,9 @@ function MenuPage() {
         );
       })
       .finally(() => setLoading(false));
-  }, [effectiveIsDineIn, effectiveUnidade]);
+  }, [customerConfirmed, effectiveIsDineIn, effectiveUnidade]);
+
+  if (!customerConfirmed) return null;
 
   const selectedCategory = categories.find((c) => c.id === active);
   const list = active ? products.filter((p) => p.category === active) : [];

@@ -45,9 +45,7 @@ import {
   updateSupabaseUnit,
   upsertSupabaseAdminSettings,
   upsertSupabaseProductAvailability,
-  validateSupabaseAdminPin,
   loginSupabaseDriver,
-  resetSupabaseOperationalData,
   finishSupabasePrintJob,
   startSupabaseDeliveryNavigation,
 } from "./supabase-data";
@@ -92,7 +90,7 @@ interface AdminContextValue {
   dataError: string | null;
   isLoading: boolean;
   hasLoadedInitialData: boolean;
-  selectUnit: (unitId: UnitId, pin?: string) => Promise<boolean>;
+  selectUnit: (unitId: UnitId) => Promise<boolean>;
   clearSelectedUnit: () => void;
   orders: Order[];
   allOrders: Order[];
@@ -107,7 +105,6 @@ interface AdminContextValue {
   deliverySettlements: DeliverySettlement[];
   reloadData: () => Promise<void>;
   validateDriverLogin: (username: string, pin: string) => Promise<string | null>;
-  resetOperationalData: (confirmation: "ZERAR") => Promise<void>;
   updateUnit: (
     patch: Partial<
       Pick<
@@ -120,7 +117,6 @@ interface AdminContextValue {
         | "isOpen"
         | "active"
         | "theme"
-        | "accessPin"
         | "publicAppUrl"
         | "acceptsDelivery"
         | "acceptsPickup"
@@ -367,7 +363,6 @@ function normalizeUnit(unit: AdminUnit): AdminUnit {
     longitude: Number.isFinite(unit.longitude) ? unit.longitude : (fallback?.longitude ?? 0),
     isOpen: typeof unit.isOpen === "boolean" ? unit.isOpen : (fallback?.isOpen ?? true),
     active: unit.active !== false,
-    accessPin: unit.accessPin ?? fallback?.accessPin ?? "1234",
     publicAppUrl: unit.publicAppUrl ?? fallback?.publicAppUrl ?? "",
     acceptsDelivery: unit.acceptsDelivery ?? fallback?.acceptsDelivery ?? true,
     acceptsPickup: unit.acceptsPickup ?? fallback?.acceptsPickup ?? true,
@@ -408,6 +403,12 @@ function buildAutoPrintJobs(order: Order, unit?: AdminUnit | null) {
     const printDestination = destination as PrintJobDestination;
     groups.set(printDestination, [...(groups.get(printDestination) ?? []), item]);
   }
+
+  // The cashier copy is the complete order receipt. Production destinations
+  // remain filtered (kitchen gets kitchen items, bar gets bar items), but the
+  // cashier must see every item regardless of its production destination.
+  if (order.items.length) groups.set("cashier", order.items);
+
   return [...groups.entries()].map(([destination, items]) => ({
     destination,
     payload: {
@@ -440,7 +441,7 @@ function findPrinterForJob(
 function markOrderPrintStatus(
   setOrders: Dispatch<SetStateAction<Order[]>>,
   orderId: string,
-  status: Order["kitchenPrintStatus"],
+  status: NonNullable<Order["kitchenPrintStatus"]>,
   printedAt?: string,
 ) {
   setOrders((prev) =>
@@ -502,9 +503,10 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         setUnits(availableUnits);
         setSelectedUnitId((current) => {
           if (current && availableUnitIds.has(current)) return current;
-          return auth.primaryUnitId && availableUnitIds.has(auth.primaryUnitId)
-            ? auth.primaryUnitId
-            : null;
+          if (auth.primaryUnitId && availableUnitIds.has(auth.primaryUnitId)) {
+            return auth.primaryUnitId;
+          }
+          return availableUnits[0]?.id ?? null;
         });
         setOrders(data.orders.filter((order) => availableUnitIds.has(order.unitId)));
         setCategories(data.categories);
@@ -606,7 +608,16 @@ export function AdminProvider({ children }: { children: ReactNode }) {
           items?: Order["items"];
           destination?: PrintJobDestination;
         };
-        if (!payload.order || !payload.items?.length) {
+        const order = payload.order ?? allOrders.find((item) => item.id === job.orderId);
+        const unit = payload.unit ?? allUnits.find((item) => item.id === selectedUnitId) ?? null;
+        const items =
+          payload.items ??
+          (job.destination === "cashier"
+            ? order?.items
+            : order?.items.filter(
+                (item) => (item.printDestination ?? "kitchen") === job.destination,
+              ));
+        if (!order || !items?.length) {
           await finishSupabasePrintJob(job.id, "failed", "Job sem dados de pedido ou itens.");
           markOrderPrintStatus(setOrders, job.orderId, "error");
           return;
@@ -624,16 +635,16 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         }
 
         const html = buildPrintHtmlForDestination(
-          payload.order,
-          payload.unit,
+          order,
+          unit,
           job.destination,
-          payload.items,
+          items,
           printer.paperWidth,
         );
         const result = await printRenderedHtml(html, printer, {
           jobId: job.id,
           orderId: job.orderId,
-          orderNumber: payload.order.number,
+          orderNumber: order.number,
           destination: job.destination,
           unitId: selectedUnitId,
         });
@@ -662,7 +673,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [selectedUnitId]);
+  }, [allOrders, allUnits, selectedUnitId]);
 
   const value = useMemo<AdminContextValue>(() => {
     const selectedUnit = allUnits.find((unit) => unit.id === selectedUnitId) ?? null;
@@ -743,26 +754,10 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         }
         return loginSupabaseDriver(username, pin);
       },
-      resetOperationalData: async (confirmation) => {
-        if (!selectedUnit) throw new Error("Selecione uma unidade antes de zerar dados.");
-        await resetSupabaseOperationalData({
-          unitSlug: selectedUnit.id,
-          adminPin: selectedUnit.accessPin,
-          confirmation,
-        });
-        await loadAdminData();
-      },
-      selectUnit: async (unitId, pin) => {
+      selectUnit: async (unitId) => {
         const unit = allUnits.find((item) => item.id === unitId);
         if (!unit) {
           setAuthError("Unidade não encontrada.");
-          return false;
-        }
-        const valid = isSupabaseConfigured
-          ? await validateSupabaseAdminPin(unitId, pin ?? "")
-          : !unit.accessPin || unit.accessPin === pin;
-        if (!valid) {
-          setAuthError("Senha numérica inválida para esta unidade.");
           return false;
         }
         setAuthError(null);
@@ -888,7 +883,11 @@ export function AdminProvider({ children }: { children: ReactNode }) {
         const order = allOrders.find((item) => item.id === orderId);
         if (!order) return;
         const nextStatus: OrderStatus | undefined =
-          paymentStatus === "rejected" && !isFinalStatus(order.status) ? "cancelled" : undefined;
+          paymentStatus === "rejected" && !isFinalStatus(order.status)
+            ? "cancelled"
+            : paymentStatus === "confirmed" && order.status === "received"
+              ? "accepted"
+              : undefined;
         const nextOrder: Order = {
           ...order,
           paymentStatus,

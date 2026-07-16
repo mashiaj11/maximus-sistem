@@ -45,7 +45,6 @@ export const UNITS: AdminUnit[] = [
     isOpen: true,
     businessHours: emptyHours,
     theme: "light",
-    accessPin: "0101",
     kitchenPrintSettings: defaultKitchenPrintSettings,
     whatsappSettings: defaultWhatsappSettings,
     driverPanelSettings: defaultDriverPanelSettings,

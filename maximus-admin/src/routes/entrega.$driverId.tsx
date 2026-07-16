@@ -6,7 +6,7 @@ import { STATUS_LABELS } from "@/admin/data/statuses";
 import type { Order } from "@/admin/data/types";
 import { getDriverColor, getFinancialTone } from "@/admin/visual-tokens";
 
-const logoUrl = "/branding/maximus-logo.png";
+const logoUrl = "/branding/maximus-logo-transparent.png";
 const EARTH_RADIUS_KM = 6371;
 
 export const Route = createFileRoute("/entrega/$driverId")({

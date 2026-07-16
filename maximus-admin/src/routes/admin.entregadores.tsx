@@ -99,10 +99,7 @@ function EntregadoresPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Entregadores"
-        subtitle={selectedUnit?.name ?? "Unidade"}
-      />
+      <PageHeader title="Entregadores" subtitle={selectedUnit?.name ?? "Unidade"} />
       <div className="mb-3 flex justify-end">
         <button
           type="button"

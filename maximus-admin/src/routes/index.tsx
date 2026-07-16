@@ -1,4 +1,6 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Navigate, createFileRoute } from "@tanstack/react-router";
+import { useAuth } from "@/auth/AuthProvider";
+import { BootSplash } from "@/components/BootSplash";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -13,20 +15,9 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  return (
-    <main className="admin-root flex min-h-screen items-center justify-center bg-background p-4 font-sora">
-      <section className="max-w-sm rounded-xl border border-border bg-card p-6 text-center shadow-sm">
-        <h1 className="text-2xl font-black">Maximus Admin</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Acesse o painel operacional para escolher uma unidade.
-        </p>
-        <Link
-          to="/admin"
-          className="mt-5 inline-flex rounded-lg bg-primary px-5 py-2.5 text-sm font-extrabold text-primary-foreground"
-        >
-          Entrar no painel
-        </Link>
-      </section>
-    </main>
-  );
+  const auth = useAuth();
+  if (auth.status === "loading") return <BootSplash message="Preparando sua operação..." />;
+  if (auth.status === "authenticated") return <Navigate to="/admin" replace />;
+  if (auth.status === "password_recovery") return <Navigate to="/redefinir-senha" replace />;
+  return <Navigate to="/login" replace />;
 }

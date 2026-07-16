@@ -2,14 +2,7 @@ import type { OrderStatus, OrderType } from "./types";
 
 // Fluxo de status por tipo de pedido.
 export const STATUS_FLOW: Record<OrderType, OrderStatus[]> = {
-  delivery: [
-    "received",
-    "accepted",
-    "in_preparation",
-    "ready",
-    "out_for_delivery",
-    "delivered",
-  ],
+  delivery: ["received", "accepted", "in_preparation", "ready", "out_for_delivery", "delivered"],
   mesa: ["received", "accepted", "in_preparation", "ready", "delivered_to_table"],
   levar: ["received", "accepted", "in_preparation", "ready_for_pickup", "picked_up"],
   balcao: ["received", "accepted", "in_preparation", "ready_for_pickup", "picked_up"],

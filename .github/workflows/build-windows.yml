@@ -1,0 +1,69 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+env:
+  NODE_VERSION: "22.16.0"
+  VITE_SUPABASE_URL: "https://example.supabase.co"
+  VITE_SUPABASE_ANON_KEY: "placeholder-public-anon-key"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            maximus-admin/package-lock.json
+            maximus-public/package-lock.json
+
+      - name: Install Admin dependencies
+        working-directory: maximus-admin
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Public dependencies
+        working-directory: maximus-public
+        run: npm ci --legacy-peer-deps
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build applications
+        run: npm run build
+
+      - name: Build Windows installer
+        working-directory: maximus-admin
+        run: npm run dist:windows
+
+      - name: Collect Windows package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path release/windows | Out-Null
+          Copy-Item maximus-admin/release/* release/windows/ -Recurse -Force
+          Copy-Item setup-windows/* release/windows/ -Recurse -Force
+          Copy-Item .env.example release/windows/.env.example -Force
+          Copy-Item setup-windows/README-WINDOWS.md release/windows/README-WINDOWS.md -Force
+          Get-ChildItem release/windows -File | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($hash.Hash)  $($_.Name)" | Add-Content release/windows/SHA256SUMS.txt
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maximus-windows
+          path: release/windows/**
+          if-no-files-found: error
+          retention-days: 30

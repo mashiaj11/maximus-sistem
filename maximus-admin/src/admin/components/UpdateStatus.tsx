@@ -1,7 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-const logoUrl = "/branding/maximus-logo.png";
+const logoUrl = "/branding/maximus-logo-transparent.png";
 
 function formatBytes(value: number) {
   if (!Number.isFinite(value) || value <= 0) return "0 MB";

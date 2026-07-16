@@ -1,17 +1,9 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import {
-  AlertTriangle,
-  Save,
-  Trash2,
-} from "lucide-react";
+import { Save } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/admin/components/AdminLayout";
-import type {
-  AdminUnit,
-  BusinessHour,
-  WeekdayKey,
-} from "@/admin/data/types";
+import type { AdminUnit, BusinessHour, WeekdayKey } from "@/admin/data/types";
 import { useAdmin } from "@/admin/store";
 
 export const Route = createFileRoute("/admin/configuracoes")({
@@ -136,15 +128,12 @@ function formatStoreAddress(address: StoreAddressDraft) {
 }
 
 function ConfiguracoesPage() {
-  const { selectedUnit, updateUnit, resetOperationalData } = useAdmin();
+  const { selectedUnit, updateUnit } = useAdmin();
   const [draft, setDraft] = useState<AdminUnit | null>(selectedUnit);
   const [addressDraft, setAddressDraft] = useState<StoreAddressDraft>(() =>
     parseStoreAddress(selectedUnit?.address),
   );
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [resetModalOpen, setResetModalOpen] = useState(false);
-  const [resetConfirmation, setResetConfirmation] = useState("");
-  const [resetting, setResetting] = useState(false);
   const selectedUnitRef = useRef(selectedUnit);
   const selectedUnitId = selectedUnit?.id;
 
@@ -243,11 +232,11 @@ function ConfiguracoesPage() {
     markDirty();
   }
 
-  const hourErrors = validateBusinessHours(draft.businessHours);
-  const canSave = saveStatus !== "saving" && hourErrors.length === 0;
+  const hourErrors = draft ? validateBusinessHours(draft.businessHours) : [];
+  const canSave = Boolean(draft) && saveStatus !== "saving" && hourErrors.length === 0;
 
   async function handleSaveConfig() {
-    if (!canSave) return;
+    if (!canSave || !draft) return;
     if (draft.id !== selectedUnit?.id) {
       setSaveStatus("error");
       toast.error("Troca de unidade em andamento. Aguarde os dados da unidade atual.");
@@ -261,7 +250,6 @@ function ConfiguracoesPage() {
       isOpen: draft.isOpen,
       businessHours: draft.businessHours,
       theme: draft.theme,
-      accessPin: draft.accessPin,
       publicAppUrl: draft.publicAppUrl?.trim() ?? "",
       acceptsDelivery: draft.acceptsDelivery ?? true,
       acceptsPickup: draft.acceptsPickup ?? true,
@@ -289,16 +277,15 @@ function ConfiguracoesPage() {
       window.setTimeout(() => setSaveStatus("idle"), 2500);
     } catch (error) {
       setSaveStatus("error");
-      toast.error(error instanceof Error ? error.message : "Não foi possível salvar. Tente novamente.");
+      toast.error(
+        error instanceof Error ? error.message : "Não foi possível salvar. Tente novamente.",
+      );
     }
   }
 
   return (
     <div className="pb-20">
-      <PageHeader
-        title="Configurações"
-        subtitle={`${selectedUnit?.name ?? "Unidade"}`}
-      />
+      <PageHeader title="Configurações" subtitle={`${selectedUnit?.name ?? "Unidade"}`} />
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
         <section className="order-1 rounded-lg border border-border bg-card p-4">
@@ -316,9 +303,7 @@ function ConfiguracoesPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm text-muted-foreground">
-                Telefone principal
-              </label>
+              <label className="mb-1 block text-sm text-muted-foreground">Telefone principal</label>
               <input
                 value={draft.phone}
                 onChange={(event) => {
@@ -326,19 +311,6 @@ function ConfiguracoesPage() {
                   markDirty();
                 }}
                 className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm text-muted-foreground">
-                Senha local
-              </label>
-              <input
-                value={draft.accessPin}
-                onChange={(event) => {
-                  setDraft({ ...draft, accessPin: onlyDigits(event.target.value).slice(0, 8) });
-                  markDirty();
-                }}
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm tracking-widest"
               />
             </div>
             <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-secondary/50 p-3">
@@ -468,9 +440,7 @@ function ConfiguracoesPage() {
                 placeholder="https://pedidos.seudominio.com.br"
                 className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
               />
-              <p className="mt-1 text-xs text-muted-foreground">
-                Base dos links e QR Codes.
-              </p>
+              <p className="mt-1 text-xs text-muted-foreground">Base dos links e QR Codes.</p>
             </div>
           </div>
         </section>
@@ -570,30 +540,6 @@ function ConfiguracoesPage() {
           </div>
         </section>
 
-        <section className="order-7 rounded-lg border border-destructive/30 bg-card p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-1 h-5 w-5 text-destructive" />
-            <div>
-              <h2 className="text-lg font-black text-destructive">Zona de risco</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Limpa dados operacionais no Supabase sem apagar unidades, configurações, cardápio ou
-                regras de entrega.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setResetModalOpen(true);
-              setResetConfirmation("");
-            }}
-            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-destructive px-4 py-2 text-sm font-extrabold text-white hover:opacity-90"
-          >
-            <Trash2 className="h-4 w-4" />
-            Zerar dados operacionais
-          </button>
-        </section>
-
         <div className="order-8 hidden items-center gap-3">
           <button
             disabled={!canSave}
@@ -628,7 +574,9 @@ function ConfiguracoesPage() {
           <div>
             <p className="text-xs font-extrabold">Configurações</p>
             <p className="text-[11px] text-white/60">
-              {hourErrors.length > 0 ? "Corrija os horários antes de salvar." : "Alterações da unidade"}
+              {hourErrors.length > 0
+                ? "Corrija os horários antes de salvar."
+                : "Alterações da unidade"}
             </p>
           </div>
           <button
@@ -653,57 +601,6 @@ function ConfiguracoesPage() {
           </button>
         </div>
       </div>
-
-      {resetModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="admin-root w-full max-w-md rounded-lg border border-destructive/40 bg-card p-5 font-sora">
-            <h2 className="text-lg font-black text-destructive">Zerar dados operacionais</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Esta ação apaga pedidos, itens, pagamentos, clientes, endereços e entregadores de
-              teste. Unidades, configurações, produtos, categorias, mesas e regras de entrega serão
-              preservados.
-            </p>
-            <label className="mt-5 block text-sm font-bold">Digite ZERAR para confirmar</label>
-            <input
-              value={resetConfirmation}
-              onChange={(event) => setResetConfirmation(event.target.value.toUpperCase())}
-              className="mt-2 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm font-black tracking-widest"
-            />
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setResetModalOpen(false)}
-                className="rounded-lg bg-secondary px-4 py-2 text-sm font-bold"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={resetConfirmation !== "ZERAR" || resetting}
-                onClick={async () => {
-                  setResetting(true);
-                  try {
-                    await resetOperationalData("ZERAR");
-                    toast.success("Dados operacionais zerados com sucesso.");
-                    setResetModalOpen(false);
-                  } catch (error) {
-                    toast.error(
-                      error instanceof Error
-                        ? error.message
-                        : "Não foi possível zerar os dados. Tente novamente.",
-                    );
-                  } finally {
-                    setResetting(false);
-                  }
-                }}
-                className="rounded-lg bg-destructive px-4 py-2 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {resetting ? "Zerando..." : "Zerar dados"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

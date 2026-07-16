@@ -63,9 +63,7 @@ function EntregaPage() {
       const key = zone.name.trim().toLowerCase();
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
-    return new Set(
-      [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name),
-    );
+    return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name));
   }, [deliveryZones]);
 
   const errors = useMemo(() => {
@@ -138,9 +136,7 @@ function EntregaPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-extrabold">Regra de cálculo</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Taxa fixa por região do checkout.
-            </p>
+            <p className="mt-1 text-xs text-muted-foreground">Taxa fixa por região do checkout.</p>
           </div>
           <span className="rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">
             Zonas fixas
@@ -220,8 +216,7 @@ function EntregaPage() {
                             {order.customerName} · {order.address ?? "Sem endereço textual"}
                           </p>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            Região: {order.deliveryZoneName ?? "não registrada"}{" "}
-                            · Tempo:{" "}
+                            Região: {order.deliveryZoneName ?? "não registrada"} · Tempo:{" "}
                             {order.deliveryEstimatedTime != null
                               ? `${order.deliveryEstimatedTime} min`
                               : "não registrado"}{" "}

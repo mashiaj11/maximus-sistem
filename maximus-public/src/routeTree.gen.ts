@@ -16,6 +16,8 @@ import { Route as OndeEstamosRouteImport } from './routes/onde-estamos'
 import { Route as MeusPedidosRouteImport } from './routes/meus-pedidos'
 import { Route as MesaRouteImport } from './routes/mesa'
 import { Route as MenuRouteImport } from './routes/menu'
+import { Route as IdentificarRouteImport } from './routes/identificar'
+import { Route as GarcomRouteImport } from './routes/garcom'
 import { Route as ExcluirDadosRouteImport } from './routes/excluir-dados'
 import { Route as CheckoutMesaRouteImport } from './routes/checkout-mesa'
 import { Route as CheckoutRouteImport } from './routes/checkout'
@@ -58,6 +60,16 @@ const MenuRoute = MenuRouteImport.update({
   path: '/menu',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IdentificarRoute = IdentificarRouteImport.update({
+  id: '/identificar',
+  path: '/identificar',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GarcomRoute = GarcomRouteImport.update({
+  id: '/garcom',
+  path: '/garcom',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExcluirDadosRoute = ExcluirDadosRouteImport.update({
   id: '/excluir-dados',
   path: '/excluir-dados',
@@ -95,6 +107,8 @@ export interface FileRoutesByFullPath {
   '/checkout': typeof CheckoutRoute
   '/checkout-mesa': typeof CheckoutMesaRoute
   '/excluir-dados': typeof ExcluirDadosRoute
+  '/garcom': typeof GarcomRoute
+  '/identificar': typeof IdentificarRoute
   '/menu': typeof MenuRoute
   '/mesa': typeof MesaRoute
   '/meus-pedidos': typeof MeusPedidosRoute
@@ -110,6 +124,8 @@ export interface FileRoutesByTo {
   '/checkout': typeof CheckoutRoute
   '/checkout-mesa': typeof CheckoutMesaRoute
   '/excluir-dados': typeof ExcluirDadosRoute
+  '/garcom': typeof GarcomRoute
+  '/identificar': typeof IdentificarRoute
   '/menu': typeof MenuRoute
   '/mesa': typeof MesaRoute
   '/meus-pedidos': typeof MeusPedidosRoute
@@ -126,6 +142,8 @@ export interface FileRoutesById {
   '/checkout': typeof CheckoutRoute
   '/checkout-mesa': typeof CheckoutMesaRoute
   '/excluir-dados': typeof ExcluirDadosRoute
+  '/garcom': typeof GarcomRoute
+  '/identificar': typeof IdentificarRoute
   '/menu': typeof MenuRoute
   '/mesa': typeof MesaRoute
   '/meus-pedidos': typeof MeusPedidosRoute
@@ -143,6 +161,8 @@ export interface FileRouteTypes {
     | '/checkout'
     | '/checkout-mesa'
     | '/excluir-dados'
+    | '/garcom'
+    | '/identificar'
     | '/menu'
     | '/mesa'
     | '/meus-pedidos'
@@ -158,6 +178,8 @@ export interface FileRouteTypes {
     | '/checkout'
     | '/checkout-mesa'
     | '/excluir-dados'
+    | '/garcom'
+    | '/identificar'
     | '/menu'
     | '/mesa'
     | '/meus-pedidos'
@@ -173,6 +195,8 @@ export interface FileRouteTypes {
     | '/checkout'
     | '/checkout-mesa'
     | '/excluir-dados'
+    | '/garcom'
+    | '/identificar'
     | '/menu'
     | '/mesa'
     | '/meus-pedidos'
@@ -189,6 +213,8 @@ export interface RootRouteChildren {
   CheckoutRoute: typeof CheckoutRoute
   CheckoutMesaRoute: typeof CheckoutMesaRoute
   ExcluirDadosRoute: typeof ExcluirDadosRoute
+  GarcomRoute: typeof GarcomRoute
+  IdentificarRoute: typeof IdentificarRoute
   MenuRoute: typeof MenuRoute
   MesaRoute: typeof MesaRoute
   MeusPedidosRoute: typeof MeusPedidosRoute
@@ -247,6 +273,20 @@ declare module '@tanstack/react-router' {
       path: '/menu'
       fullPath: '/menu'
       preLoaderRoute: typeof MenuRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/identificar': {
+      id: '/identificar'
+      path: '/identificar'
+      fullPath: '/identificar'
+      preLoaderRoute: typeof IdentificarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/garcom': {
+      id: '/garcom'
+      path: '/garcom'
+      fullPath: '/garcom'
+      preLoaderRoute: typeof GarcomRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/excluir-dados': {
@@ -312,6 +352,8 @@ const rootRouteChildren: RootRouteChildren = {
   CheckoutRoute: CheckoutRoute,
   CheckoutMesaRoute: CheckoutMesaRoute,
   ExcluirDadosRoute: ExcluirDadosRoute,
+  GarcomRoute: GarcomRoute,
+  IdentificarRoute: IdentificarRoute,
   MenuRoute: MenuRoute,
   MesaRoute: MesaRoute,
   MeusPedidosRoute: MeusPedidosRoute,

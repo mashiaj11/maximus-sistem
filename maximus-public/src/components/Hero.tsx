@@ -47,7 +47,7 @@ export function Hero({
       onMouseLeave={handlePointerLeave}
     >
       <div
-        className={`pointer-events-none absolute inset-0 scale-[1.03] bg-[url('/hero-maximus-bg.png')] bg-cover bg-[65%_center] transition-[filter,opacity,transform] duration-500 ease-out sm:bg-[68%_center] lg:bg-center ${
+        className={`pointer-events-none absolute inset-0 scale-[1.03] bg-[url('/products/hero-burguer.png')] bg-[length:min(72vw,900px)_auto] bg-[88%_center] bg-no-repeat transition-[filter,opacity,transform] duration-500 ease-out sm:bg-[82%_center] lg:bg-[88%_center] ${
           isClosed ? "brightness-[0.58] grayscale saturate-[0.2]" : ""
         }`}
         style={{

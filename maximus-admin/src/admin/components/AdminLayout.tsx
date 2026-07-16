@@ -17,10 +17,9 @@ import {
 import { useAuth } from "@/auth/AuthProvider";
 import { isFinalStatus } from "@/admin/data/statuses";
 import { isPaymentPending, useAdmin } from "@/admin/store";
-import type { AdminUnit } from "@/admin/data/types";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-const logoUrl = "/branding/maximus-logo.png";
+const logoUrl = "/branding/maximus-logo-transparent.png";
 const SIDEBAR_COLLAPSED_KEY = "maximus-admin-sidebar-collapsed";
 
 const NAV = [
@@ -52,7 +51,7 @@ function LogoMark({ src, className }: { src?: string; className: string }) {
     <img
       src={src}
       alt="Maximus Hamburgueria"
-      className={`${className} object-contain`}
+      className={`${className} object-contain drop-shadow-[0_0_12px_rgba(255,61,0,0.22)]`}
       onError={() => setFailed(true)}
     />
   );
@@ -61,19 +60,7 @@ function LogoMark({ src, className }: { src?: string; className: string }) {
 export function AdminLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { profile, signOut } = useAuth();
-  const {
-    orders,
-    units,
-    selectedUnit,
-    selectUnit,
-    clearSelectedUnit,
-    authError,
-    dataError,
-    isLoading,
-  } = useAdmin();
-  const [pinUnit, setPinUnit] = useState<AdminUnit | null>(null);
-  const [pin, setPin] = useState("");
-  const [checkingPin, setCheckingPin] = useState(false);
+  const { orders, units, selectedUnit, selectUnit, dataError, isLoading } = useAdmin();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
@@ -82,6 +69,10 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (!selectedUnit && units.length === 1) void selectUnit(units[0].id);
+  }, [selectUnit, selectedUnit, units]);
 
   const activeOrders = orders.filter((o) => !isFinalStatus(o.status)).length;
   const pendingPayments = orders.filter(isPaymentPending).length;
@@ -107,17 +98,13 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
             <div className="mb-5 text-center">
               <LogoMark src={logoUrl} className="mx-auto h-12 w-12" />
               <h1 className="mt-3 text-2xl font-black tracking-tight">Escolha a unidade</h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Selecione a operação.
-              </p>
+              <p className="mt-2 text-sm text-muted-foreground">Selecione a operação.</p>
             </div>
 
             {isLoading ? (
               <div className="rounded-lg border border-border bg-card p-5 text-center">
                 <p className="text-base font-bold">Carregando unidades</p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Buscando dados.
-                </p>
+                <p className="mt-2 text-sm text-muted-foreground">Buscando dados.</p>
               </div>
             ) : dataError ? (
               <div className="rounded-lg border border-destructive/30 bg-card p-5 text-center">
@@ -127,84 +114,28 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
             ) : selectableUnits.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border bg-card p-5 text-center">
                 <p className="text-base font-bold">Nenhuma unidade cadastrada</p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Sem unidades disponíveis.
-                </p>
+                <p className="mt-2 text-sm text-muted-foreground">Sem unidades disponíveis.</p>
               </div>
             ) : (
               <div className="grid gap-3 sm:grid-cols-2">
                 {selectableUnits.map((unit) => (
                   <button
                     key={unit.id}
-                    onClick={() => {
-                      setPin("");
-                      setPinUnit(unit);
-                    }}
+                    onClick={() => void selectUnit(unit.id)}
                     className="group rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
                   >
                     <p className="text-[11px] font-bold uppercase tracking-wide text-primary">
                       {unit.isOpen ? "Aberta agora" : "Fechada"}
                     </p>
                     <h2 className="mt-2 text-lg font-black">{unit.name}</h2>
-                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{unit.address}</p>
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                      {unit.address}
+                    </p>
                     <span className="mt-4 inline-flex rounded-md bg-primary px-3 py-1.5 text-xs font-extrabold text-primary-foreground group-hover:opacity-90">
                       Entrar
                     </span>
                   </button>
                 ))}
-              </div>
-            )}
-
-            {pinUnit && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
-                <form
-                  className="w-full max-w-sm rounded-lg border border-border bg-card p-5"
-                  onSubmit={async (event) => {
-                    event.preventDefault();
-                    setCheckingPin(true);
-                    try {
-                      if (await selectUnit(pinUnit.id, pin)) setPinUnit(null);
-                    } finally {
-                      setCheckingPin(false);
-                    }
-                  }}
-                >
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-primary">
-                    Acesso local
-                  </p>
-                  <h2 className="mt-2 text-lg font-black">{pinUnit.name}</h2>
-                  <label className="mt-5 block text-sm font-semibold" htmlFor="admin-pin">
-                    Senha numérica
-                  </label>
-                  <input
-                    id="admin-pin"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={pin}
-                    onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
-                    className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-lg font-bold tracking-widest outline-none focus:border-primary"
-                    autoFocus
-                  />
-                  {authError && (
-                    <p className="mt-3 text-sm font-semibold text-destructive">{authError}</p>
-                  )}
-                  <div className="mt-6 flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPinUnit(null)}
-                      className="rounded-lg bg-secondary px-4 py-2 text-sm font-bold"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={checkingPin}
-                      className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground"
-                    >
-                      {checkingPin ? "Validando..." : "Liberar painel"}
-                    </button>
-                  </div>
-                </form>
               </div>
             )}
           </section>
@@ -225,7 +156,9 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
           }`}
         >
           <TooltipProvider delayDuration={150}>
-            <div className={`border-b border-white/10 py-3 ${isSidebarCollapsed ? "px-2" : "px-3"}`}>
+            <div
+              className={`border-b border-white/10 py-3 ${isSidebarCollapsed ? "px-2" : "px-3"}`}
+            >
               <div
                 className={`flex items-center gap-3 ${
                   isSidebarCollapsed ? "justify-center" : "justify-between"
@@ -253,19 +186,15 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                 </Tooltip>
               </div>
               {!isSidebarCollapsed && (
-                <div className="mt-3 flex items-center justify-between gap-3">
+                <div className="mt-3 flex items-center gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-extrabold text-white">{selectedUnit.name}</p>
+                    <p className="truncate text-sm font-extrabold text-white">
+                      {selectedUnit.name}
+                    </p>
                     <p className="text-[10px] uppercase tracking-wide text-white/45">
-                      Unidade atual
+                      Operação ativa
                     </p>
                   </div>
-                  <button
-                    onClick={clearSelectedUnit}
-                    className="shrink-0 rounded-md bg-white/5 px-2 py-1 text-[11px] font-bold text-white/80 hover:bg-white/10"
-                  >
-                    Trocar
-                  </button>
                 </div>
               )}
             </div>
@@ -366,12 +295,6 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
             <span className="min-w-0 flex-1 truncate font-bold tracking-wide">
               {selectedUnit.name}
             </span>
-            <button
-              onClick={clearSelectedUnit}
-              className="rounded-md bg-secondary px-2.5 py-1 text-xs font-bold"
-            >
-              Trocar
-            </button>
             <button
               type="button"
               onClick={() => void signOut()}

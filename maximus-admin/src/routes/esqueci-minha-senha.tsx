@@ -3,7 +3,7 @@ import { Mail } from "lucide-react";
 import { useState } from "react";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
 
-const logoUrl = "/branding/maximus-logo.png";
+const logoUrl = "/branding/maximus-logo-transparent.png";
 const SENT_MESSAGE =
   "Se existir uma conta vinculada a este e-mail, enviaremos as instruções para redefinir a senha.";
 

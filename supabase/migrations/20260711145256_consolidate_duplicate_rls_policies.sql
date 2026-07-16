@@ -1,0 +1,9 @@
+drop policy if exists admin_settings_authenticated_manage on public.admin_settings;
+drop policy if exists admin_settings_authenticated_read on public.admin_settings;
+drop policy if exists customer_addresses_staff_manage on public.customer_addresses;
+drop policy if exists customer_addresses_staff_read on public.customer_addresses;
+drop policy if exists delivery_drivers_staff_manage on public.delivery_drivers;
+drop policy if exists delivery_drivers_staff_read on public.delivery_drivers;
+drop policy if exists order_items_staff_insert on public.order_items;
+drop policy if exists order_items_staff_update on public.order_items;
+drop policy if exists order_items_staff_delete on public.order_items;

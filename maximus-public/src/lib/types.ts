@@ -110,9 +110,13 @@ export interface DeliveryZone {
 }
 
 export interface CustomerOrderItem {
+  productId?: string;
   name: string;
   quantity: number;
+  unitPrice?: number;
   total: number;
+  customizations?: string[];
+  notes?: string;
 }
 
 export interface CustomerOrderHistory {
@@ -120,9 +124,14 @@ export interface CustomerOrderHistory {
   number: string;
   date: number;
   items: CustomerOrderItem[];
+  subtotal?: number;
+  deliveryFee?: number;
   total: number;
   mode: OrderTrackMode;
   status: string;
+  rawStatus?: string;
+  paymentMethod?: string;
+  paymentStatus?: string;
   address?: CustomerAddress;
 }
 

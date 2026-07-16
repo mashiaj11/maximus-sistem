@@ -102,12 +102,21 @@ async function writePrintSettings(settings) {
 function normalizePrintOptions(payload = {}) {
   const paperWidth = Number(payload.paperWidth) === 58 ? 58 : 80;
   const margin = Number.isFinite(Number(payload.margin)) ? Math.max(0, Number(payload.margin)) : 0;
+  const marginPixels = (margin * 96) / 25.4;
+  const scaleFactor = Math.min(100, Math.max(50, Number(payload.scaleFactor ?? 100)));
   return {
     silent: true,
     printBackground: true,
     deviceName: payload.deviceName,
     copies: Math.max(1, Number(payload.copies ?? 1)),
-    margins: { marginType: "custom", top: margin, bottom: margin, left: margin, right: margin },
+    scaleFactor,
+    margins: {
+      marginType: "custom",
+      top: marginPixels,
+      bottom: marginPixels,
+      left: marginPixels,
+      right: marginPixels,
+    },
     pageSize: { width: Math.round(paperWidth * 1000), height: 297000 },
   };
 }
@@ -140,25 +149,6 @@ function withTimeout(promise, timeoutMs, label) {
 }
 
 async function waitForRenderedDocument(printWindow) {
-  await withTimeout(
-    new Promise((resolve, reject) => {
-      if (printWindow.webContents.isDestroyed()) {
-        reject(new Error("Janela de impressão encerrada antes do carregamento."));
-        return;
-      }
-      printWindow.webContents.once("did-fail-load", (_event, _code, description) => {
-        reject(new Error(description || "Falha ao carregar documento de impressão."));
-      });
-      if (!printWindow.webContents.isLoading()) {
-        resolve();
-        return;
-      }
-      printWindow.webContents.once("did-finish-load", resolve);
-    }),
-    PRINT_TIMEOUT_MS,
-    "carregamento da impressão",
-  );
-
   await withTimeout(
     printWindow.webContents.executeJavaScript(
       `Promise.all([
@@ -194,6 +184,8 @@ async function withHiddenPrintWindow(html, task) {
   });
 
   try {
+    // loadFile only resolves after did-finish-load. Waiting for that event again
+    // can miss it and keep Windows print jobs blocked until the timeout.
     await printWindow.loadFile(file);
     await waitForRenderedDocument(printWindow);
     return await task(printWindow);
@@ -265,13 +257,15 @@ async function printToPdf(payload = {}) {
 
 function buildPrinterTestHtml(payload = {}) {
   const sectorName = String(payload.sectorName ?? "Setor");
+  const paperWidth = Number(payload.paperWidth) === 58 ? 58 : 80;
   const now = new Date().toLocaleString("pt-BR");
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
     <style>
-      @page { size: 80mm auto; margin: 0; }
+      * { box-sizing: border-box; }
+      @page { size: ${paperWidth}mm auto; margin: 0; }
       html, body { margin: 0; padding: 0; background: #fff; color: #000; }
       body { font-family: Arial, sans-serif; font-size: 13px; }
-      main { width: 80mm; padding: 3mm; }
+      main { width: 100%; max-width: 100%; padding: 3mm; overflow: hidden; }
       h1 { margin: 0 0 4mm; text-align: center; font-size: 22px; }
       p { margin: 1.5mm 0; }
       .line { margin-top: 4mm; border-top: 1px dashed #000; }
@@ -320,9 +314,10 @@ function registerPrintIpc() {
         printHtml({
           html: buildPrinterTestHtml(data),
           deviceName: data.printerName,
-          paperWidth: 80,
-          copies: 1,
-          margin: 0,
+          paperWidth: data.paperWidth,
+          copies: data.copies,
+          margin: data.margin,
+          scaleFactor: data.scaleFactor,
           destination: data.sectorKey,
         }),
       payload,
@@ -588,7 +583,7 @@ if (!gotSingleInstanceLock) {
 }
 
 function resolvePreloadPath() {
-  return path.join(__dirname, "preload.mjs");
+  return path.join(__dirname, "preload.cjs");
 }
 
 function resolveNitroEntry() {
@@ -691,10 +686,10 @@ async function startNitroServer() {
   });
 
   const baseUrl = `http://127.0.0.1:${port}`;
-  await waitForServer(`${baseUrl}/login`);
+  await waitForServer(`${baseUrl}/admin`);
   appOrigin = baseUrl;
 
-  return `${baseUrl}/login`;
+  return `${baseUrl}/admin`;
 }
 
 function stopNitroServer() {
@@ -707,9 +702,11 @@ async function createMainWindow() {
   Menu.setApplicationMenu(null);
 
   const initialUrl = isDevelopment ? devUrl : await startNitroServer();
+  const windowIcon = path.join(app.getAppPath(), "build", "icon.ico");
 
   mainWindow = new BrowserWindow({
     title: "Maximus Admin",
+    icon: windowIcon,
     width: 1400,
     height: 900,
     minWidth: 1000,
@@ -805,6 +802,9 @@ function showStartupError(error) {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === "win32") {
+    app.setAppUserModelId("com.maximus.admin");
+  }
   registerPrintIpc();
   registerUpdaterIpc();
   createMainWindow()

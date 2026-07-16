@@ -1,0 +1,135 @@
+services:
+  n8n-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${N8N_POSTGRES_USER:-${POSTGRES_USER:-maximus}}
+      POSTGRES_PASSWORD: ${N8N_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}}
+      POSTGRES_DB: ${N8N_POSTGRES_DB:-n8n}
+      TZ: ${TZ:-America/Santarem}
+    volumes:
+      - n8n_postgres_data:/var/lib/postgresql/data
+    networks:
+      - maximus_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${N8N_POSTGRES_USER:-${POSTGRES_USER:-maximus}} -d ${N8N_POSTGRES_DB:-n8n}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  evolution-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${EVOLUTION_POSTGRES_USER:-${POSTGRES_USER:-maximus}}
+      POSTGRES_PASSWORD: ${EVOLUTION_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}}
+      POSTGRES_DB: ${EVOLUTION_POSTGRES_DB:-evolution}
+      TZ: ${TZ:-America/Santarem}
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    networks:
+      - maximus_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EVOLUTION_POSTGRES_USER:-${POSTGRES_USER:-maximus}} -d ${EVOLUTION_POSTGRES_DB:-evolution}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - maximus_internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  evolution-api:
+    image: evoapicloud/evolution-api:v2.3.7
+    restart: unless-stopped
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-America/Santarem}
+      SERVER_TYPE: http
+      SERVER_PORT: 8080
+      AUTHENTICATION_TYPE: apikey
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY no .env}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${EVOLUTION_POSTGRES_USER:-${POSTGRES_USER:-maximus}}:${EVOLUTION_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}}@evolution-postgres:5432/${EVOLUTION_POSTGRES_DB:-evolution}?schema=public
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/0
+      CACHE_LOCAL_ENABLED: "false"
+    ports:
+      - "127.0.0.1:${EVOLUTION_PORT:-8082}:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - maximus_internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  n8n:
+    image: n8nio/n8n:${N8N_VERSION:-1.123.65}
+    restart: unless-stopped
+    depends_on:
+      n8n-postgres:
+        condition: service_healthy
+      evolution-api:
+        condition: service_started
+    environment:
+      TZ: ${TZ:-America/Santarem}
+      GENERIC_TIMEZONE: ${TZ:-America/Santarem}
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: n8n-postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${N8N_POSTGRES_DB:-n8n}
+      DB_POSTGRESDB_USER: ${N8N_POSTGRES_USER:-${POSTGRES_USER:-maximus}}
+      DB_POSTGRESDB_PASSWORD: ${N8N_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}}
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?defina N8N_ENCRYPTION_KEY no .env}
+      N8N_USER_MANAGEMENT_JWT_SECRET: ${N8N_USER_MANAGEMENT_JWT_SECRET:?defina N8N_USER_MANAGEMENT_JWT_SECRET no .env}
+      WEBHOOK_URL: http://localhost:${N8N_PORT:-5678}/
+      SUPABASE_URL: ${SUPABASE_URL:?defina SUPABASE_URL no .env}
+      SUPABASE_SERVICE_ROLE: ${SUPABASE_SERVICE_ROLE:?defina SUPABASE_SERVICE_ROLE no .env}
+      EVOLUTION_API_URL: http://evolution-api:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY no .env}
+      EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-maximus}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    networks:
+      - maximus_internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+networks:
+  maximus_internal:
+    driver: bridge
+
+volumes:
+  n8n_postgres_data:
+  evolution_postgres_data:
+  redis_data:
+  evolution_instances:
+  n8n_data:

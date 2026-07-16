@@ -1,0 +1,221 @@
+﻿{
+    "updatedAt":  "2026-07-12T08:59:39.716Z",
+    "createdAt":  "2026-07-12T08:07:11.783Z",
+    "id":  "iT26yMnZAM4o3ay2",
+    "name":  "Maximus Bot - Status Pedido WhatsApp",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "seconds",
+                                                                           "secondsInterval":  5
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       0,
+                                       0
+                                   ],
+                      "id":  "26b7a0ff-c8ae-442f-994a-6b55173cc140",
+                      "name":  "Schedule Trigger",
+                      "retryOnFail":  false
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "return $input.all();"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       416,
+                                       0
+                                   ],
+                      "id":  "0ed9f3ae-701b-4782-965c-5be244009fec",
+                      "name":  "Separar pedidos"
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{$env.SUPABASE_URL}}/rest/v1/rpc/get_pending_order_status_whatsapp_notifications",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "apikey",
+                                                                                         "value":  "={{$env.SUPABASE_SERVICE_ROLE}}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "=Bearer {{$env.SUPABASE_SERVICE_ROLE}}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "{\n  \"p_limit\": 10\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       208,
+                                       0
+                                   ],
+                      "id":  "c6b5f031-b506-4f90-9c7c-ed145f61bae6",
+                      "name":  "Buscar pedidos pendentes"
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{($env.EVOLUTION_API_URL || \"http://evolution-api:8080\") + \"/message/sendText/\" + ($env.EVOLUTION_INSTANCE_NAME || \"maximus\")}}",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "apikey",
+                                                                                         "value":  "={{$env.EVOLUTION_API_KEY}}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"number\": \"{{$json.customer_phone}}\",\n  \"text\": \"{{$json.message}}\"\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       624,
+                                       0
+                                   ],
+                      "id":  "1afd78e5-b34e-488c-82e2-f93e8d77acf9",
+                      "name":  "Enviar WhatsApp"
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{$env.SUPABASE_URL}}/rest/v1/rpc/mark_order_status_whatsapp_notification_sent",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "apikey",
+                                                                                         "value":  "={{$env.SUPABASE_SERVICE_ROLE}}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "=Bearer {{$env.SUPABASE_SERVICE_ROLE}}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"p_order_id\": \"{{$(\u0027Separar pedidos\u0027).item.json.order_id}}\",\n  \"p_order_status\": \"{{$(\u0027Separar pedidos\u0027).item.json.order_status}}\",\n  \"p_customer_phone\": \"{{$(\u0027Separar pedidos\u0027).item.json.customer_phone}}\",\n  \"p_message\": \"{{$(\u0027Separar pedidos\u0027).item.json.message}}\",\n  \"p_provider_message_id\": \"{{$json.key.id}}\"\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       832,
+                                       0
+                                   ],
+                      "id":  "492c374e-a8a6-4ab2-bf0f-0362734e087a",
+                      "name":  "Marcar como enviado"
+                  }
+              ],
+    "connections":  {
+                        "Schedule Trigger":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Buscar pedidos pendentes",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Buscar pedidos pendentes":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Separar pedidos",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Separar pedidos":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Enviar WhatsApp",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Enviar WhatsApp":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Marcar como enviado",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "binaryMode":  "separate",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Schedule Trigger":  {
+                                                     "recurrenceRules":  [
+                                                                             null
+                                                                         ],
+                                                     "recurrenceRuleSignatures":  [
+                                                                                      null
+                                                                                  ]
+                                                 }
+                   },
+    "nodeGroups":  [
+
+                   ],
+    "versionCounter":  70,
+    "sourceWorkflowId":  null,
+    "tags":  [
+
+             ]
+}

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@/auth/AuthProvider";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
 
-const logoUrl = "/branding/maximus-logo.png";
+const logoUrl = "/branding/maximus-logo-transparent.png";
 
 export const Route = createFileRoute("/redefinir-senha")({
   head: () => ({

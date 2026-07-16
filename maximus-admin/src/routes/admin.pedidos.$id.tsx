@@ -287,9 +287,7 @@ function PedidoDetalhePage() {
               <h3 className="mb-2 flex items-center gap-2 font-semibold">
                 <Utensils className="h-4 w-4 text-primary" /> Mesa
               </h3>
-              <p className="text-xl font-bold">
-                Mesa {String(order.tableNumber).padStart(2, "0")}
-              </p>
+              <p className="text-xl font-bold">Mesa {String(order.tableNumber).padStart(2, "0")}</p>
             </div>
           )}
 

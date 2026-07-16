@@ -1,0 +1,18 @@
+MAXIMUS - LEIA-ME PRIMEIRO
+
+1. Instale o Docker Desktop.
+2. Instale o Git.
+3. Instale o Node.js 22 LTS.
+4. Baixe o repositorio com git clone.
+5. Entre na pasta do projeto.
+6. Abra o arquivo .env e preencha os dados reais do Supabase, n8n e Evolution API.
+7. Abra PowerShell e execute:
+
+   Set-ExecutionPolicy -Scope Process Bypass
+   .\setup-windows\INSTALAR-MAXIMUS.ps1
+   .\setup-windows\INICIAR-MAXIMUS.ps1
+
+8. Abra o Maximus Admin pelo atalho ou pelo endereco indicado no terminal.
+9. Confira se n8n, Evolution API e Docker estao ativos.
+
+Nunca envie o arquivo .env real para o GitHub.

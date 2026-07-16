@@ -12,7 +12,6 @@ import {
   getOrderInfo,
   getRememberedLastOrderId,
 } from "@/lib/supabase-data";
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase";
 
 export const Route = createFileRoute("/acompanhar")({
   head: () => ({
@@ -50,20 +49,9 @@ export function TrackPageContent({ orderId: routeOrderId }: { orderId?: string }
 
     loadOrder();
 
-    const orderId = routeOrderId ?? contextOrder?.id ?? getRememberedLastOrderId();
-    if (!isSupabaseConfigured || !orderId) return undefined;
-    const channel = getSupabaseClient()
-      .channel(`public-order-${orderId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "orders", filter: `id=eq.${orderId}` },
-        () => loadOrder(),
-      )
-      .subscribe();
     const poll = window.setInterval(loadOrder, 10000);
 
     return () => {
-      getSupabaseClient().removeChannel(channel);
       window.clearInterval(poll);
     };
   }, [contextOrder?.id, placeOrder, routeOrderId]);

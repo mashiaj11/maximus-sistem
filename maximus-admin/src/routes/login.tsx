@@ -2,8 +2,9 @@ import { Link, Navigate, createFileRoute, useNavigate } from "@tanstack/react-ro
 import { Eye, EyeOff, LockKeyhole, Mail } from "lucide-react";
 import { useState } from "react";
 import { useAuth } from "@/auth/AuthProvider";
+import { BootSplash } from "@/components/BootSplash";
 
-const logoUrl = "/branding/maximus-logo.png";
+const logoUrl = "/branding/maximus-logo-transparent.png";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -24,6 +25,10 @@ function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (auth.status === "loading") {
+    return <BootSplash message="Verificando acesso..." />;
+  }
 
   if (auth.status === "authenticated" && !auth.isPasswordRecovery) {
     return <Navigate to="/admin" replace />;
@@ -49,7 +54,11 @@ function Login() {
     <main className="admin-root admin-root--dark flex min-h-screen items-center justify-center px-4 py-8 font-sora">
       <section className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl sm:p-8">
         <div className="flex items-center gap-4">
-          <img src={logoUrl} alt="Maximus Hamburgueria" className="h-14 w-14 object-contain" />
+          <img
+            src={logoUrl}
+            alt="Maximus Hamburgueria"
+            className="h-16 w-16 object-contain drop-shadow-[0_0_18px_rgba(255,61,0,0.28)]"
+          />
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-primary">
               Maximus Admin
@@ -111,10 +120,10 @@ function Login() {
 
           <button
             type="submit"
-            disabled={isSubmitting || auth.status === "loading"}
+            disabled={isSubmitting}
             className="flex h-11 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-extrabold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isSubmitting || auth.status === "loading" ? "Validando..." : "Entrar"}
+            {isSubmitting ? "Validando..." : "Entrar"}
           </button>
 
           <div className="text-center">

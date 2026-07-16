@@ -70,10 +70,7 @@ function DashboardPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Dashboard"
-        subtitle={selectedUnit?.name ?? "Unidade"}
-      />
+      <PageHeader title="Dashboard" subtitle={selectedUnit?.name ?? "Unidade"} />
 
       <PeriodFilter
         period={period}

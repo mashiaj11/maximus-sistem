@@ -75,11 +75,11 @@ function MesaPage() {
   const qrUnit = unit ?? unidade;
   const qrTable = table ?? mesa;
   const displayTable = formatTable(qrTable);
-  const checkoutSearch = useMemo(
+  const checkoutSearch = useMemo<MesaSearch & { mode: "dine_in" }>(
     () => ({
       ...(qrUnit ? { unit: qrUnit, unidade: qrUnit } : {}),
       ...(qrTable ? { table: qrTable, mesa: qrTable } : {}),
-      mode: "dine_in",
+      mode: "dine_in" as const,
     }),
     [qrTable, qrUnit],
   );

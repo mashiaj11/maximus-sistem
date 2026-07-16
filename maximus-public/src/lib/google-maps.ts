@@ -74,9 +74,13 @@ export function loadGoogleMapsScript() {
         return;
       }
       existing.addEventListener("load", () => resolve(), { once: true });
-      existing.addEventListener("error", () => reject(new Error("Falha ao carregar Google Maps.")), {
-        once: true,
-      });
+      existing.addEventListener(
+        "error",
+        () => reject(new Error("Falha ao carregar Google Maps.")),
+        {
+          once: true,
+        },
+      );
       return;
     }
 
@@ -163,7 +167,9 @@ export function normalizeAddressComponents(result: GoogleGeocoderResult): Normal
     "locality",
   ]
     .map((type) => get(type))
-    .filter((value, index, list): value is string => Boolean(value && list.indexOf(value) === index));
+    .filter((value, index, list): value is string =>
+      Boolean(value && list.indexOf(value) === index),
+    );
   const location = result.geometry?.location;
   return {
     formattedAddress: result.formatted_address ?? "",

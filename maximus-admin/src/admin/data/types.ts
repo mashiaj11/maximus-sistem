@@ -120,6 +120,7 @@ export interface Order {
   delivery_completed_by_driver?: boolean;
   deliveryPayoutAmount?: number;
   outForDeliveryAt?: string;
+  out_for_delivery_at?: string;
   navigationStartedAt?: string;
   navigation_started_at?: string;
   deliveredAt?: string;
@@ -209,6 +210,11 @@ export interface PrintSectorSettings {
   enabled: boolean;
   label: string;
   printerName: string;
+  paperWidth?: 58 | 80;
+  margin?: number;
+  copies?: number;
+  autoPrint?: boolean;
+  scaleFactor?: number;
 }
 
 export interface PrintSectorSettingsMap {
@@ -299,7 +305,6 @@ export interface AdminUnit {
   active?: boolean;
   businessHours: BusinessHour[];
   theme: UnitTheme;
-  accessPin: string;
   publicAppUrl?: string;
   acceptsDelivery?: boolean;
   acceptsPickup?: boolean;

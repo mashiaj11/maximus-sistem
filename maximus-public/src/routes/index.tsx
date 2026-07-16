@@ -28,15 +28,7 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const TODAY_KEYS = [
-  "domingo",
-  "segunda",
-  "terca",
-  "quarta",
-  "quinta",
-  "sexta",
-  "sabado",
-] as const;
+const TODAY_KEYS = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"] as const;
 
 function getClosedHeroHoursText(units: GeoUnit[]) {
   const today = TODAY_KEYS[new Date().getDay()];

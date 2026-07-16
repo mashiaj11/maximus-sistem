@@ -949,10 +949,7 @@ function ProductEditor({
 
               <div className="space-y-2">
                 {group.choices.map((choice) => (
-                  <div
-                    key={choice.id}
-                    className="grid gap-2 sm:grid-cols-[1fr_110px_110px_90px]"
-                  >
+                  <div key={choice.id} className="grid gap-2 sm:grid-cols-[1fr_110px_110px_90px]">
                     <input
                       value={choice.name}
                       onChange={(event) =>

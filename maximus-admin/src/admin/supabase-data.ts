@@ -143,14 +143,13 @@ type AdminSettingsRow = {
   delivery_fee_per_km: number | null;
   max_delivery_distance_km: number | null;
   free_delivery_from: number | null;
-  admin_pin: string | null;
 };
 
 const UNIT_SELECT =
   "id, slug, name, phone, address, latitude, longitude, is_open, business_hours, theme, kitchen_print_settings";
 
 const ADMIN_SETTINGS_SELECT =
-  "unit_id, settings, require_driver_completion, whatsapp_enabled, whatsapp_bot_enabled, whatsapp_number, whatsapp_welcome_message, whatsapp_human_message, whatsapp_messages, whatsapp_status_settings, delivery_panel_enabled, kitchen_print_enabled, kitchen_print_settings, minimum_order_value, base_delivery_fee, delivery_fee_per_km, max_delivery_distance_km, free_delivery_from, admin_pin";
+  "unit_id, settings, require_driver_completion, whatsapp_enabled, whatsapp_bot_enabled, whatsapp_number, whatsapp_welcome_message, whatsapp_human_message, whatsapp_messages, whatsapp_status_settings, delivery_panel_enabled, kitchen_print_enabled, kitchen_print_settings, minimum_order_value, base_delivery_fee, delivery_fee_per_km, max_delivery_distance_km, free_delivery_from";
 
 type OrderRow = {
   id: string;
@@ -325,7 +324,6 @@ function emptyUnit(unitId: UnitId): AdminUnit {
     active: true,
     businessHours: [],
     theme: "light",
-    accessPin: "",
     kitchenPrintSettings: FALLBACK_KITCHEN_PRINT_SETTINGS,
     whatsappSettings: {
       enabled: false,
@@ -438,13 +436,19 @@ function normalizeWhatsappStatusSettings(value: unknown, messages: WhatsappStatu
   ) as WhatsappStatusSettings;
 }
 
+type LegacyBusinessHour = Partial<AdminUnit["businessHours"][number]> & {
+  opensAt?: string;
+  closesAt?: string;
+};
+
 function normalizeBusinessHours(value: unknown, fallback: AdminUnit["businessHours"]) {
-  const rows =
+  const rows = (
     Array.isArray(value) && value.length
-      ? (value as Array<Partial<AdminUnit["businessHours"][number]>>)
+      ? (value as LegacyBusinessHour[])
       : fallback.length
         ? fallback
-        : WEEKDAY_KEYS.map((day) => ({ day, open: false, periods: [] }));
+        : WEEKDAY_KEYS.map((day) => ({ day, open: false, periods: [] }))
+  ) as LegacyBusinessHour[];
   return rows.map((hour) => {
     const periods =
       Array.isArray(hour.periods) && hour.periods.length
@@ -501,7 +505,6 @@ function mapUnit(row: UnitRow, settings?: AdminSettingsRow): AdminUnit {
       ? normalizeBusinessHours(row.business_hours, [])
       : [],
     theme: row.theme ?? "light",
-    accessPin: settings?.admin_pin ?? "",
     publicAppUrl: settingsObject.public_app_url ?? "",
     acceptsDelivery: settingsObject.accepts_delivery ?? true,
     acceptsPickup: settingsObject.accepts_pickup ?? true,
@@ -514,7 +517,8 @@ function mapUnit(row: UnitRow, settings?: AdminSettingsRow): AdminUnit {
             ...kitchenPrintSettings,
             autoPrintEnabled:
               settings?.kitchen_print_enabled ??
-              (row.kitchen_print_settings as Partial<KitchenPrintSettings>).autoPrintEnabled,
+              (row.kitchen_print_settings as Partial<KitchenPrintSettings>).autoPrintEnabled ??
+              FALLBACK_KITCHEN_PRINT_SETTINGS.autoPrintEnabled,
           }
         : {
             ...FALLBACK_KITCHEN_PRINT_SETTINGS,
@@ -894,7 +898,9 @@ export async function loadSupabaseAdminData(): Promise<SupabaseAdminData> {
     selectOptional(
       supabase
         .from("delivery_zones")
-        .select("id, unit_id, name, fee, estimated_time_min, estimated_time_max, active, sort_order")
+        .select(
+          "id, unit_id, name, fee, estimated_time_min, estimated_time_max, active, sort_order",
+        )
         .order("sort_order", { ascending: true })
         .order("name", { ascending: true }),
       [] as DeliveryZoneRow[],
@@ -1088,7 +1094,7 @@ export async function updateSupabaseOrderPayment(
     .from("orders")
     .update({
       payment_status: paymentStatus,
-      ...(nextStatus ? { status: nextStatus } : {}),
+      ...(nextStatus ? { status: nextStatus, delivery_status: nextStatus } : {}),
     })
     .eq("id", order.id);
   if (error) throw new Error(error.message);
@@ -1221,6 +1227,63 @@ export async function updateSupabaseUnit(unitId: UnitId, patch: Partial<AdminUni
   if (!data) throw new Error("Nenhuma unidade foi atualizada no Supabase.");
 }
 
+export type KitchenPrintSettingsSnapshot = {
+  settings: KitchenPrintSettings;
+  savedAt: string | null;
+};
+
+function mergeKitchenPrintSettings(
+  unitSettings: unknown,
+  adminSettings: unknown,
+): KitchenPrintSettings {
+  const unit =
+    unitSettings && typeof unitSettings === "object"
+      ? (unitSettings as Partial<KitchenPrintSettings>)
+      : {};
+  const admin =
+    adminSettings && typeof adminSettings === "object"
+      ? (adminSettings as Partial<KitchenPrintSettings>)
+      : {};
+
+  return {
+    ...FALLBACK_KITCHEN_PRINT_SETTINGS,
+    ...unit,
+    ...admin,
+    sectors: {
+      ...unit.sectors,
+      ...admin.sectors,
+    },
+  };
+}
+
+export async function loadSupabaseKitchenPrintSettings(
+  unitId: UnitId,
+): Promise<KitchenPrintSettingsSnapshot> {
+  assertConfigured();
+  const supabase = getSupabaseClient();
+  const { data: unit, error: unitError } = await supabase
+    .from("units")
+    .select("id, kitchen_print_settings, updated_at")
+    .eq("slug", unitId)
+    .single();
+  if (unitError) throw new Error(unitError.message);
+
+  const { data: adminSettings, error: settingsError } = await supabase
+    .from("admin_settings")
+    .select("kitchen_print_settings, updated_at")
+    .eq("unit_id", unit.id)
+    .maybeSingle();
+  if (settingsError) throw new Error(settingsError.message);
+
+  return {
+    settings: mergeKitchenPrintSettings(
+      unit.kitchen_print_settings,
+      adminSettings?.kitchen_print_settings,
+    ),
+    savedAt: adminSettings?.updated_at ?? unit.updated_at ?? null,
+  };
+}
+
 export async function upsertSupabaseAdminSettings(unit: AdminUnit) {
   assertConfigured();
   const supabase = getSupabaseClient();
@@ -1268,7 +1331,6 @@ export async function upsertSupabaseAdminSettings(unit: AdminUnit) {
     delivery_fee_per_km: unit.deliveryFeePerKm ?? 0,
     max_delivery_distance_km: unit.maxDeliveryDistanceKm ?? 0,
     free_delivery_from: unit.freeDeliveryFrom ?? 0,
-    admin_pin: unit.accessPin,
   };
   const { data, error } = await supabase
     .from("admin_settings")
@@ -1293,7 +1355,7 @@ export async function insertSupabaseCategory(name: string, order: number): Promi
     .select("id, name, sort_order, availability_scope, print_destination, active")
     .single();
   if (error) throw new Error(error.message);
-  return mapCategory(data as CategoryRow);
+  return mapCategory(data as CategoryRow, []);
 }
 
 export async function updateSupabaseCategory(
@@ -1690,20 +1752,6 @@ export async function deleteSupabaseCourier(courierId: string) {
   if (error) throw new Error(error.message);
 }
 
-export async function validateSupabaseAdminPin(unitId: UnitId, pin: string) {
-  assertConfigured();
-  const supabase = getSupabaseClient();
-  const unit = (await selectOrThrow(
-    supabase.from("units").select("id, slug").eq("slug", unitId).single(),
-  )) as Pick<UnitRow, "id" | "slug">;
-  const rows = (await selectOrThrow(
-    supabase.from("admin_settings").select("admin_pin").eq("unit_id", unit.id).limit(1),
-  )) as Array<Pick<AdminSettingsRow, "admin_pin">>;
-  const settings = rows[0];
-  const expected = settings?.admin_pin ?? "";
-  return Boolean(expected) && expected === pin;
-}
-
 function mapPrintJob(row: {
   id: string;
   unit_id: string;
@@ -1746,7 +1794,7 @@ export async function createSupabasePrintJobs(
   const rows = jobs.map((job) => ({
     unit_id: unit.id,
     order_id: order.id,
-    print_type: "auto",
+    print_type: "order",
     destination: job.destination,
     status: "pending",
     payload: job.payload,
@@ -1812,20 +1860,6 @@ export async function loginSupabaseDriver(username: string, pin: string) {
     return null;
   }
   return driver.id;
-}
-
-export async function resetSupabaseOperationalData(params: {
-  unitSlug: UnitId;
-  adminPin: string;
-  confirmation: "ZERAR";
-}) {
-  assertConfigured();
-  const { error } = await getSupabaseClient().rpc("reset_operational_data", {
-    p_unit_slug: params.unitSlug,
-    p_admin_pin: params.adminPin,
-    p_confirmation: params.confirmation,
-  });
-  if (error) throw new Error(error.message);
 }
 
 export async function insertSupabaseDeliveryRule(

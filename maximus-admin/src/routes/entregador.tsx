@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { AdminProvider, useAdmin } from "@/admin/store";
 
-const logoUrl = "/branding/maximus-logo.png";
+const logoUrl = "/branding/maximus-logo-transparent.png";
 
 export const Route = createFileRoute("/entregador")({
   component: EntregadorRoute,

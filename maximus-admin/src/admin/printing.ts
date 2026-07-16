@@ -9,7 +9,7 @@ import type {
   PrintJobDestination,
 } from "./data/types";
 
-const logoUrl = "/branding/maximus-logo.png";
+const logoUrl = "/branding/maximus-logo-transparent.png";
 
 const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   pix_app: "Pix pelo app",
@@ -61,24 +61,73 @@ export function destinationLabel(destination: string) {
 }
 
 function thermalCss(width: 58 | 80 = 80) {
+  // Receipt printers do not print across the full paper roll. The TM-T20 uses
+  // 576 dots at 203 DPI on 80 mm paper, which is about 72 mm. Keeping the page
+  // at the physical roll size while constraining the content prevents the
+  // Windows driver from clipping both sides.
+  const printableWidth = width === 80 ? 72 : 52;
   return `
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+    html, body {
+      width: ${width}mm;
+      max-width: ${width}mm;
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #000;
+      overflow: visible;
+    }
     body { font-family: Arial, sans-serif; font-size: ${width === 58 ? 11 : 13}px; }
-    main { width: ${width}mm; padding: 2mm; }
+    main {
+      width: ${printableWidth}mm;
+      max-width: ${printableWidth}mm;
+      margin: 0 auto;
+      padding: 1mm;
+      overflow: visible;
+    }
     h1 { margin: 0 0 3mm; text-align: center; font-size: ${width === 58 ? 18 : 24}px; }
     h2 { margin: 3mm 0 1.5mm; border-top: 1px solid #000; padding-top: 2mm; font-size: ${width === 58 ? 12 : 14}px; text-transform: uppercase; }
     p { margin: 1mm 0; }
     .center { text-align: center; }
+    .service-mode {
+      margin: 2.5mm 0;
+      border: 2px solid #000;
+      padding: 2mm 1mm;
+      text-align: center;
+    }
+    .service-label {
+      display: block;
+      font-size: ${width === 58 ? 19 : 24}px;
+      font-weight: 900;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .service-detail {
+      display: block;
+      margin-top: 1.5mm;
+      font-size: ${width === 58 ? 11 : 13}px;
+      font-weight: 800;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
     .row { display: flex; justify-content: space-between; gap: 2mm; border-bottom: 1px dashed #999; padding: 1.2mm 0; }
+    .row > * { min-width: 0; overflow-wrap: anywhere; }
+    .row > :last-child { text-align: right; }
     .item { border-bottom: 1px dashed #999; padding: 2mm 0; break-inside: avoid; }
+    .item-main { display: flex; align-items: baseline; gap: 1.5mm; }
+    p, li, strong, span { overflow-wrap: anywhere; }
     .qty { font-size: ${width === 58 ? 14 : 17}px; font-weight: 800; }
+    .item-name { font-size: ${width === 58 ? 14 : 17}px; font-weight: 900; line-height: 1.2; }
+    .item-price { margin-left: auto; white-space: nowrap; font-size: ${width === 58 ? 11 : 13}px; }
     .muted { color: #333; }
     .note { border: 1px solid #000; padding: 1.5mm; margin-top: 1.5mm; font-weight: 800; }
     .total { font-size: ${width === 58 ? 14 : 18}px; font-weight: 900; border-bottom: 2px solid #000; }
     ul { margin: 1mm 0 0; padding-left: 5mm; }
     @page { size: ${width}mm auto; margin: 0; }
-    @media print { body, main { width: ${width}mm; } }
+    @media print {
+      html, body { width: ${width}mm; max-width: ${width}mm; }
+      main { width: ${printableWidth}mm; max-width: ${printableWidth}mm; margin: 0 auto; }
+    }
   `;
 }
 
@@ -89,8 +138,10 @@ function renderThermalItems(items: OrderItem[], withPrices: boolean) {
         ? `<ul>${item.customizations.map((customization) => `<li>${escapeHtml(customization)}</li>`).join("")}</ul>`
         : "";
       return `<section class="item">
-        <p><span class="qty">${item.quantity}x</span> <strong>${escapeHtml(item.name)}</strong>${
-          withPrices ? ` <span>${formatBRL(item.unitPrice * item.quantity)}</span>` : ""
+        <p class="item-main"><span class="qty">${item.quantity}x</span><strong class="item-name">${escapeHtml(item.name)}</strong>${
+          withPrices
+            ? `<span class="item-price">${formatBRL(item.unitPrice * item.quantity)}</span>`
+            : ""
         }</p>
         ${customizations}
         ${item.notes ? `<p class="note">OBS: ${escapeHtml(item.notes)}</p>` : ""}
@@ -112,6 +163,7 @@ export function buildKitchenTicketForItems(
     <h1>#${order.number}</h1>
     <p class="center"><strong>${escapeHtml(unit?.name ?? "Maximus")}</strong></p>
     <p class="center">${escapeHtml(destinationLabel(destination))}</p>
+    ${buildServiceModeBanner(order)}
     <div class="row"><strong>Hora</strong><span>${escapeHtml(formatDateTime(order.createdAt))}</span></div>
     <div class="row"><strong>Tipo</strong><span>${escapeHtml(TYPE_LABELS[order.type])}</span></div>
     <div class="row"><strong>Local</strong><span>${escapeHtml(orderLocation(order))}</span></div>
@@ -142,6 +194,7 @@ export function buildCashierReceiptForItems(
     <h1>#${order.number}</h1>
     <p class="center"><strong>${escapeHtml(unit?.name ?? "Maximus")}</strong></p>
     ${unit?.address ? `<p class="center muted">${escapeHtml(unit.address)}</p>` : ""}
+    ${buildServiceModeBanner(order)}
     <div class="row"><strong>Hora</strong><span>${escapeHtml(formatDateTime(order.createdAt))}</span></div>
     <div class="row"><strong>Cliente</strong><span>${escapeHtml(order.customerName || "Cliente")}</span></div>
     <div class="row"><strong>Tipo</strong><span>${escapeHtml(orderReceiptConsumptionLabel(order))}</span></div>
@@ -210,11 +263,36 @@ export async function printRenderedHtml(
   config?: Partial<MaximusPrinterConfig>,
   meta: Record<string, unknown> = {},
 ) {
-  if (!isElectronDesktop() || !config) {
+  if (!isElectronDesktop()) {
     webPrintHtml(html);
     return { ok: true, mode: "web" };
   }
-  if ((config.connectionMode ?? "system") !== "system" && !config.simulate) {
+
+  // Some manual print routes may not have a destination-specific printer yet.
+  // Never fall back to window.print() in the desktop app: that bypasses all
+  // settings saved in the printing panel. Prefer the requested sector and then
+  // another usable printer configured for the same unit.
+  const settings = await window.maximusDesktop?.getPrintSettings();
+  const unitId = String(meta.unitId ?? config?.unitId ?? "");
+  const destination = String(meta.destination ?? config?.destination ?? "");
+  const isUsable = (printer: Partial<MaximusPrinterConfig>) =>
+    printer.enabled !== false && (Boolean(printer.deviceName) || Boolean(printer.simulate));
+  const savedPrinter = settings?.printers.find(
+    (printer) =>
+      printer.unitId === unitId && printer.destination === destination && isUsable(printer),
+  );
+  const unitFallback = settings?.printers.find(
+    (printer) => printer.unitId === unitId && isUsable(printer),
+  );
+  const resolvedConfig = isUsable(config ?? {}) ? config : (savedPrinter ?? unitFallback);
+
+  if (!resolvedConfig) {
+    return {
+      ok: false,
+      error: "Nenhuma impressora válida foi configurada para esta unidade.",
+    };
+  }
+  if ((resolvedConfig.connectionMode ?? "system") !== "system" && !resolvedConfig.simulate) {
     return {
       ok: false,
       error:
@@ -223,15 +301,16 @@ export async function printRenderedHtml(
   }
   const payload = {
     html,
-    deviceName: config.deviceName,
-    copies: config.copies ?? 1,
-    paperWidth: config.paperWidth ?? 80,
-    margin: config.margin ?? 0,
-    destination: config.destination,
-    unitId: config.unitId,
+    deviceName: resolvedConfig.deviceName,
+    copies: resolvedConfig.copies ?? 1,
+    paperWidth: resolvedConfig.paperWidth ?? 80,
+    margin: resolvedConfig.margin ?? 0,
+    scaleFactor: resolvedConfig.scaleFactor ?? 100,
+    destination: resolvedConfig.destination,
+    unitId: resolvedConfig.unitId,
     ...meta,
   };
-  return config.simulate
+  return resolvedConfig.simulate
     ? window.maximusDesktop!.printToPdf(payload)
     : window.maximusDesktop!.printHtml(payload);
 }
@@ -269,6 +348,32 @@ function formatDateTime(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function buildServiceModeBanner(order: Order): string {
+  if (order.type === "mesa") {
+    const table = order.tableNumber != null ? String(order.tableNumber).padStart(2, "0") : "—";
+    return `<section class="service-mode">
+      <strong class="service-label">MESA ${escapeHtml(table)}</strong>
+      <span class="service-detail">PEDIDO PARA CONSUMO NA MESA</span>
+    </section>`;
+  }
+  if (order.type === "delivery") {
+    return `<section class="service-mode">
+      <strong class="service-label">DELIVERY</strong>
+      <span class="service-detail">${escapeHtml(orderLocation(order))}</span>
+    </section>`;
+  }
+  if (order.type === "levar") {
+    return `<section class="service-mode">
+      <strong class="service-label">RETIRADA</strong>
+      <span class="service-detail">CLIENTE RETIRA NO BALCÃO</span>
+    </section>`;
+  }
+  return `<section class="service-mode">
+    <strong class="service-label">BALCÃO</strong>
+    <span class="service-detail">ATENDIMENTO NO BALCÃO</span>
+  </section>`;
 }
 
 function orderLocation(order: Order): string {
